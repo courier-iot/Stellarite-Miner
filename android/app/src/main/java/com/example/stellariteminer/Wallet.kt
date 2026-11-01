@@ -147,6 +147,36 @@ class Wallet(private val prefs: android.content.SharedPreferences) {
             .put("fee", fee).put("nonce", nonce).put("sig", sig)
     }
 
+    /**
+     * A fee-free username claim: {"type":"name","from","name","nonce","work","sig"}.
+     * Searches for `work` so sha256d(canonical claim) has [bits] leading zero bits
+     * (the node's anti-spam rule), then signs. Takes a few seconds; call off the
+     * main thread. [progress] gets the number of tries so far; [cancelled] can stop it.
+     */
+    fun signNameClaim(name: String, nonce: Long, bits: Int,
+                      progress: (Long) -> Unit = {}, cancelled: () -> Boolean = { false }): org.json.JSONObject? {
+        val key = privateKeyHex ?: throw IllegalStateException("no wallet on this phone")
+        val pub = hex(Secp256k1.publicKey(BigInteger(key, 16)))
+        val head = "{\"from\":\"$pub\",\"name\":\"$name\",\"nonce\":$nonce,\"type\":\"name\",\"work\":".toByteArray()
+        val tail = "}".toByteArray()
+        val limit = BigInteger.ONE.shiftLeft(256 - bits)
+        val mid = MessageDigest.getInstance("SHA-256").apply { update(head) }     // hash the fixed part once
+        val outer = MessageDigest.getInstance("SHA-256")
+        var work = 0L
+        while (true) {
+            val md = mid.clone() as MessageDigest
+            md.update(work.toString().toByteArray()); md.update(tail)
+            val h = outer.digest(md.digest())
+            if (BigInteger(1, h) < limit) break
+            work++
+            if (work and 0xFFFF == 0L) { progress(work); if (cancelled()) return null }
+        }
+        val signing = String(head) + work + "}"
+        val sig = hex(Secp256k1.sign(BigInteger(key, 16), signing.toByteArray()))
+        return org.json.JSONObject().put("type", "name").put("from", pub).put("name", name)
+            .put("nonce", nonce).put("work", work).put("sig", sig)
+    }
+
     companion object {
         private const val KEY = "wallet_private_key"
 

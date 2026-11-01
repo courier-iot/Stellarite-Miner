@@ -1,4 +1,5 @@
 """Run from the node/ folder:  python -m unittest discover tests"""
+import math
 import os
 import sys
 import tempfile
@@ -6,6 +7,7 @@ import time
 import unittest
 
 os.environ["PULSARITE_DIFFICULTY_BITS"] = "6"  # easy mining for tests
+os.environ["NAME_POW_BITS"] = "8"   # quick name-claim proof of work for tests
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import config as C  # noqa: E402
@@ -36,6 +38,16 @@ class Wallet:
         self.key = new_private_key()
         self.pub = public_key_hex(self.key)
         self.addr = address_from_pubkey(self.pub)
+
+    def name_claim(self, name, nonce, work=None):
+        t = {"type": "name", "from": self.pub, "name": name, "nonce": nonce, "work": 0}
+        if work is None:
+            while not ch.name_claim_pow_ok(t):
+                t["work"] += 1
+        else:
+            t["work"] = work
+        t["sig"] = sign(self.key, ch.tx_signing_bytes(t))
+        return t
 
     def tx(self, to, amount, nonce, fee=C.MIN_FEE):
         t = {"from": self.pub, "to": to, "amount": amount, "fee": fee, "nonce": nonce}
@@ -213,18 +225,92 @@ class ChainTests(unittest.TestCase):
 
     def test_intercept_aims_where_the_star_will_be(self):
         sid = next(s["id"] for s in stars.CATALOG if s["name"] == "Kapteyn's Star")
-        t_arr, p = stars.intercept(stars.SOL, stars.LAUNCH_T, sid)
-        flight = (t_arr - stars.LAUNCH_T) * stars.SPEED / 1000       # mly the probe flew
-        self.assertAlmostEqual(flight, stars.distance(stars.SOL, p), delta=stars.SPEED / 500)
+        t_arr, p, u = stars.intercept(stars.SOL, stars.LAUNCH_T, sid)
         self.assertEqual(p, stars.pos(sid, t_arr))
+        self.assertEqual(u, stars.V)                       # a long flyby leg ends at cruise speed
+        d = stars.distance_uly(stars.SOL, p)               # 10 years to 0.1c over 0.5 ly, then cruise
+        self.assertAlmostEqual(t_arr - stars.LAUNCH_T, 10_000 + (d - 500_000) * 1000 // stars.V, delta=2)
+
+    def test_probe_kinematics(self):
+        LY = 1_000_000                                     # micro-light-years per light-year
+        V = stars.V
+        self.assertEqual(stars.leg(10 * LY, 0, True), (110_000, 0))        # 10 up + 90 cruise + 10 down
+        self.assertEqual(stars.leg(10 * LY, V, False), (100_000, V))       # pure cruise at 0.1c
+        self.assertEqual(stars.leg(10 * LY, 0, False), (105_000, V))       # launch ramp costs 5 years
+        t, u = stars.leg(LY // 10, 0, True)                                # short hop: never reaches 0.1c
+        self.assertAlmostEqual(t, 2000 * math.sqrt(10), delta=2)
+        self.assertEqual(u, 0)
+        t, _ = stars.leg(LY // 10, V, True)                                # too fast to stop: overshoot and return
+        self.assertAlmostEqual(t, 10_000 + 2000 * math.sqrt(40), delta=2)
+        t, u = stars.leg(LY // 8, 0, False)                                # partial acceleration
+        self.assertEqual(u, math.isqrt(2 * stars.A * (LY // 8)))
+        self.assertEqual(t, u * 1000 // stars.A)
+        for d in range(0, 3 * LY, LY // 50):                               # longer legs never take less time...
+            for u0 in (0, V // 3, V):
+                for stop in (False, True):
+                    if stop and u0 * u0 // (2 * stars.A) >= d:             # ...unless too fast to stop (overshoot)
+                        continue
+                    self.assertLessEqual(stars.leg(d, u0, stop)[0], stars.leg(d + LY // 50, u0, stop)[0])
+
+    def test_survey_stops(self):
+        h = "cd" * 32
+        st = stars.stops(h)
+        self.assertEqual(len(st), stars.SURVEY_STOPS)
+        self.assertEqual(st, stars.stops(h))
+        self.assertTrue(set(st) <= set(stars.problem(h)))
+        route = stars.baseline_route(stars.problem(h))
+        self.assertGreater(stars.route_time(route, st), stars.route_time(route))   # braking costs time
+        for sid, _, _, u in stars.route_legs(route, st):
+            if sid in st:
+                self.assertEqual(u, 0)
 
     def test_miner_timing_matches_node(self):
         from route_opt import mission_time
-        prob = stars.problem("ab" * 32)
-        work = {"stars": [dict(stars.CATALOG[i]) for i in prob], "probe_speed_mly_per_year": stars.SPEED,
-                "launch_t": stars.LAUNCH_T, "intercept_iterations": stars.INTERCEPT_ITERATIONS}
-        route = stars.baseline_route(prob)[::-1]
-        self.assertEqual(mission_time(route, work), stars.route_time(route))
+        for h in ("ab" * 32, "12" * 32, "f0" * 32):
+            prob, st = stars.problem(h), stars.stops(h)
+            work = {"stars": [dict(stars.CATALOG[i]) for i in prob], "stops": st,
+                    "probe_speed_mly_per_year": stars.SPEED,
+                    "probe_accel_mly_per_year2": C.PROBE_ACCEL_MLY_PER_YEAR2,
+                    "launch_t": stars.LAUNCH_T, "intercept_iterations": stars.INTERCEPT_ITERATIONS}
+            for route in (stars.baseline_route(prob, st), stars.baseline_route(prob, st)[::-1], prob):
+                self.assertEqual(mission_time(route, work), stars.route_time(route, st))
+
+    def test_name_claim_without_coins(self):
+        carol = Wallet()                          # no coins at all
+        self.bc.add_transaction(carol.name_claim("CAROL", 0))
+        mine_next(self.bc, self.alice.addr, self.clock)   # anyone's block includes it
+        self.assertEqual(self.bc.state.name_owner("CAROL"), carol.addr)
+        self.assertEqual(self.bc.state.balance(carol.addr), 0)
+        # replay of the same claim is refused (nonce used)
+        with self.assertRaises(ch.ValidationError):
+            self.bc.add_transaction(carol.name_claim("CAROL", 0))
+        # someone else can't claim it
+        with self.assertRaises(ch.ValidationError):
+            self.bc.add_transaction(self.bob.name_claim("CAROL", 0))
+
+    def test_name_claim_needs_proof_of_work_and_signature(self):
+        dave = Wallet()
+        bad_work = next(w for w in range(10_000) if not ch.name_claim_pow_ok(
+            {"type": "name", "from": dave.pub, "name": "DAVE", "nonce": 0, "work": w}))
+        with self.assertRaises(ch.ValidationError):
+            self.bc.add_transaction(dave.name_claim("DAVE", 0, work=bad_work))
+        forged = dict(dave.name_claim("DAVE", 0), name="DAVID")    # signature no longer matches
+        with self.assertRaises(ch.ValidationError):
+            self.bc.add_transaction(forged)
+        with self.assertRaises(ch.ValidationError):
+            self.bc.add_transaction(dave.name_claim("x", 0))        # bad name format
+
+    def test_competing_name_claims(self):
+        e1, e2 = Wallet(), Wallet()
+        self.bc.add_transaction(e1.name_claim("ECHO", 0))
+        with self.assertRaises(ch.ValidationError):                 # second claim waits behind the first
+            self.bc.add_transaction(e2.name_claim("ECHO", 0))
+        mine_next(self.bc, self.alice.addr, self.clock)
+        self.assertEqual(self.bc.state.name_owner("ECHO"), e1.addr)
+        # names claimed by transaction survive re-validation from genesis
+        other = ch.Blockchain()
+        self.assertTrue(other.replace_chain(self.bc.blocks))
+        self.assertEqual(other.state.name_owner("ECHO"), e1.addr)
 
     def test_persistence(self):
         with tempfile.TemporaryDirectory() as d:
@@ -249,6 +335,8 @@ class ApiTests(unittest.TestCase):
         work = self.client.get(f"/mining/work?address={addr}{q}").get_json()
         pts = [(s["x"], s["y"], s["z"]) for s in work["stars"]]
         route = [work["stars"][i]["id"] for i in optimise(pts, seconds=optimise_seconds, seed=1)]
+        from route_opt import mission_time, polish
+        route = polish(route, lambda r: mission_time(r, work), optimise_seconds)
         scored = self.client.post("/mining/route", json={"job_id": work["job_id"], "route": route}).get_json()
         prefix, target = bytes.fromhex(scored["prefix"]), int(scored["target"], 16)
         nonce = 0
@@ -275,7 +363,7 @@ class ApiTests(unittest.TestCase):
     def test_stale_job_rejected(self):
         old = self.client.get(f"/mining/work?address={self.alice.addr}").get_json()
         self.mine_via_api(self.alice.addr)
-        route = stars.baseline_route([st["id"] for st in old["stars"]])
+        route = stars.baseline_route([st["id"] for st in old["stars"]], old["stops"])
         r = self.client.post("/mining/submit", json={"job_id": old["job_id"], "route": route, "nonce": 0})
         self.assertIn(r.status_code, (409, 410))
 

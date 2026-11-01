@@ -42,7 +42,7 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
 
     private fun routeWork(u: StarRouteRules, t: SoloChain.Template, fresh: Boolean, ms: Long): Pair<Any, UsefulWork> {
         if (fresh || routePlanner == null) {
-            val f = StarField.fromCatalog(u.problem(t.prev))
+            val f = StarField.fromCatalog(u.problem(t.prev), u.stops(t.prev))
             routeField = f
             routePlanner = MovingRoutePlanner(f)
         }
@@ -53,7 +53,8 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
         val time = opt.bestTime
         val base = f.time(f.baseline())
         return JSONArray(route) to RouteInfo(route, time / 1000.0, base / 1000.0,
-            Math.round(10000.0 * (1 - time.toDouble() / base)) / 100.0, f.length(opt.best) / 1000.0)
+            Math.round(10000.0 * (1 - time.toDouble() / base)) / 100.0, f.length(opt.best) / 1000.0,
+            u.stops(t.prev))
     }
 
     private fun trajectoryWork(u: TrajectoryRules, t: SoloChain.Template, fresh: Boolean, ms: Long): Pair<Any, UsefulWork> {
@@ -117,10 +118,12 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
             for (b in chain.blocks.drop(1).takeLast(limit).reversed()) {
                 val r = b.getJSONArray("route")
                 val ids = List(r.length()) { r.getInt(it) }
-                val t = u.time(ids); val base = u.time(u.baseline(ids))
+                val st = u.stops(b.getString("prev_hash"))
+                val t = u.time(ids, st); val base = u.time(u.baseline(ids, st), st)
                 out.put(JSONObject().put("height", b.getLong("height")).put("route_ids", JSONArray(ids))
+                    .put("stop_ids", JSONArray(st))
                     .put("years", t / 1000.0).put("baseline_years", base / 1000.0)
-                    .put("length_ly", u.length(ids) / 1000.0)
+                    .put("length_ly", u.length(ids, st) / 1000.0)
                     .put("miner_name", b.getJSONArray("txs").getJSONObject(0).optString("name", ""))
                     .put("improvement_pct", Math.round(10000.0 * (1 - t.toDouble() / base)) / 100.0))
             }

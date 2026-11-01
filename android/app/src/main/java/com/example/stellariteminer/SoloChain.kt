@@ -210,21 +210,36 @@ class StarRouteRules : UsefulRules {
         return chosen.sorted()
     }
 
+    /** The block's survey stars (same as stars.stops): where the probe must come to rest. */
+    fun stops(prevHash: String): List<Int> {
+        val pool = problem(prevHash).toMutableList()
+        val chosen = ArrayList<Int>()
+        val seed = bytesOfHex(prevHash)
+        var i = 0
+        while (chosen.size < SoloData.SURVEY_STOPS) {
+            val d = sha256(seed + "stops".toByteArray() + byteArrayOf((i ushr 24).toByte(), (i ushr 16).toByte(), (i ushr 8).toByte(), i.toByte()))
+            val r = BigInteger(1, d).mod(BigInteger.valueOf(pool.size.toLong())).toInt()
+            chosen += pool.removeAt(r)
+            i++
+        }
+        return chosen.sorted()
+    }
+
     /** Mission time (milli-years) of a route given as catalog star ids. */
-    fun time(route: List<Int>): Long {
-        val f = StarField.fromCatalog(route)
+    fun time(route: List<Int>, stops: List<Int>): Long {
+        val f = StarField.fromCatalog(route, stops)
         return f.time(IntArray(route.size) { it })
     }
 
     /** Distance flown (mly) for a route given as catalog star ids. */
-    fun length(route: List<Int>): Long {
-        val f = StarField.fromCatalog(route)
+    fun length(route: List<Int>, stops: List<Int>): Long {
+        val f = StarField.fromCatalog(route, stops)
         return f.length(IntArray(route.size) { it })
     }
 
     /** The greedy baseline route (catalog star ids) for a set of stars. */
-    fun baseline(stars: List<Int>): List<Int> {
-        val f = StarField.fromCatalog(stars.sorted())
+    fun baseline(stars: List<Int>, stops: List<Int>): List<Int> {
+        val f = StarField.fromCatalog(stars.sorted(), stops)
         return f.baseline().map { f.ids[it] }
     }
 
@@ -233,7 +248,8 @@ class StarRouteRules : UsefulRules {
         val route = List(a.length()) { a.getInt(it) }
         val prob = problem(prevHash)
         require(route.sorted() == prob) { "route must visit each of the block's stars exactly once" }
-        return time(route) to time(baseline(prob))
+        val st = stops(prevHash)
+        return time(route, st) to time(baseline(prob, st), st)
     }
 }
 

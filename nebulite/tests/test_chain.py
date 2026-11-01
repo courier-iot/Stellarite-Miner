@@ -6,6 +6,7 @@ import time
 import unittest
 
 os.environ["NEBULITE_DIFFICULTY_BITS"] = "6"  # easy mining for tests
+os.environ["NAME_POW_BITS"] = "8"   # quick name-claim proof of work for tests
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import config as C  # noqa: E402
@@ -45,6 +46,16 @@ class Wallet:
         self.key = new_private_key()
         self.pub = public_key_hex(self.key)
         self.addr = address_from_pubkey(self.pub)
+
+    def name_claim(self, name, nonce, work=None):
+        t = {"type": "name", "from": self.pub, "name": name, "nonce": nonce, "work": 0}
+        if work is None:
+            while not ch.name_claim_pow_ok(t):
+                t["work"] += 1
+        else:
+            t["work"] = work
+        t["sig"] = sign(self.key, ch.tx_signing_bytes(t))
+        return t
 
     def tx(self, to, amount, nonce, fee=C.MIN_FEE):
         t = {"from": self.pub, "to": to, "amount": amount, "fee": fee, "nonce": nonce}
@@ -237,6 +248,43 @@ class ChainTests(unittest.TestCase):
         other = ch.Blockchain()
         self.assertTrue(other.replace_chain(self.bc.blocks))
         self.assertEqual(other.state.name_owner("ORBIT"), self.alice.addr)
+
+    def test_name_claim_without_coins(self):
+        carol = Wallet()                          # no coins at all
+        self.bc.add_transaction(carol.name_claim("CAROL", 0))
+        mine_next(self.bc, self.alice.addr, self.clock)   # anyone's block includes it
+        self.assertEqual(self.bc.state.name_owner("CAROL"), carol.addr)
+        self.assertEqual(self.bc.state.balance(carol.addr), 0)
+        # replay of the same claim is refused (nonce used)
+        with self.assertRaises(ch.ValidationError):
+            self.bc.add_transaction(carol.name_claim("CAROL", 0))
+        # someone else can't claim it
+        with self.assertRaises(ch.ValidationError):
+            self.bc.add_transaction(self.bob.name_claim("CAROL", 0))
+
+    def test_name_claim_needs_proof_of_work_and_signature(self):
+        dave = Wallet()
+        bad_work = next(w for w in range(10_000) if not ch.name_claim_pow_ok(
+            {"type": "name", "from": dave.pub, "name": "DAVE", "nonce": 0, "work": w}))
+        with self.assertRaises(ch.ValidationError):
+            self.bc.add_transaction(dave.name_claim("DAVE", 0, work=bad_work))
+        forged = dict(dave.name_claim("DAVE", 0), name="DAVID")    # signature no longer matches
+        with self.assertRaises(ch.ValidationError):
+            self.bc.add_transaction(forged)
+        with self.assertRaises(ch.ValidationError):
+            self.bc.add_transaction(dave.name_claim("x", 0))        # bad name format
+
+    def test_competing_name_claims(self):
+        e1, e2 = Wallet(), Wallet()
+        self.bc.add_transaction(e1.name_claim("ECHO", 0))
+        with self.assertRaises(ch.ValidationError):                 # second claim waits behind the first
+            self.bc.add_transaction(e2.name_claim("ECHO", 0))
+        mine_next(self.bc, self.alice.addr, self.clock)
+        self.assertEqual(self.bc.state.name_owner("ECHO"), e1.addr)
+        # names claimed by transaction survive re-validation from genesis
+        other = ch.Blockchain()
+        self.assertTrue(other.replace_chain(self.bc.blocks))
+        self.assertEqual(other.state.name_owner("ECHO"), e1.addr)
 
     def test_persistence(self):
         with tempfile.TemporaryDirectory() as d:

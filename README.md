@@ -55,7 +55,7 @@ Push this repo to GitHub, open the **Actions** tab, and download `stellarite-min
 
 The first time you open the app, setup walks you through:
 
-1. **Username:** 3–16 characters (A–Z, 0–9, _). It's written into the blocks you mine: your first block claims it on that network, and nobody else can use it there. People can send you coins by name, and the route map and mission log show who mined what.
+1. **Username:** 3–16 characters (A–Z, 0–9, _). It goes on-chain: either your first mined block claims it, or tap **[CLAIM NOW]** on the RIG tab to register it straight away without mining or coins. Nobody else can use it on that network. People can send you coins by name, and the route map and mission log show who mined what.
 2. **Wallet:** create one, or import a key from `wallet.py`. Setup shows your key and won't continue until you type its last 4 characters, to make sure you saved it. One key gives you both a `plsr…` and an `nblt…` address. Your username belongs to your address, so restoring the key restores the name.
 3. **Where the blockchain runs:** solo on the phone, your computer, or a cloud server (see below).
 
@@ -80,6 +80,10 @@ The app mines as a foreground service with a visible notification and a Stop but
 
 It uses half the CPU cores by default; you can change that with the CORES slider. The RIG tab shows your balance under the wallet address, from the solo chain or from the node, and your username in the top corner.
 
+### Claiming your username
+
+Under your balance, the RIG tab shows whether your username is on that coin's chain yet. If it isn't, tap **[CLAIM NOW]**: the phone does a few seconds of proof of work (up to about half a minute on older phones; it stops spam, since claims are free), signs the claim and sends it to the node. The name is yours once the next block is mined, by anyone. If your address already has a different name on-chain, the button says **[SWITCH]**, and switching frees the old name. Claiming needs a node; in solo mode your blocks claim it instead. From a computer: `python wallet.py claim NAME`.
+
 ### Sending coins
 
 Tap **[SEND]** under your wallet address, then enter a username (e.g. `ORBIT`) or an address, an amount and a fee (0.00001 minimum). The app signs the transaction on the phone, so your key never leaves it, and the node includes it in the next block. Sending needs a node; solo chains hold mined blocks only.
@@ -98,17 +102,17 @@ python miner.py --address plsr…   # mine from the computer too
 
 ## Useful work: star routes
 
-**The problem.** Each block's 24 stars are picked from the previous block's hash, so nobody can work on a block's route before that block exists. A probe launches from the Sun in **2100**, cruises at **10% of light speed**, and must fly past every star once.
+**The problem.** Each block's 24 stars are picked from the previous block's hash, so nobody can work on a block's route before that block exists. A probe launches from rest at the Sun in **2100** and must visit every star once. It accelerates to a cruise speed of **10% of light speed** (taking 10 years and half a light-year), and flies past most stars at whatever speed it has. Four of each block's stars are **survey stops**, also picked from the hash: the probe must brake to a halt at each one (another 10 years and half a light-year), then speed up again. If it's moving too fast to stop in time, it overshoots and comes back. So a good route doesn't just find short hops; it plans around the stops, for example grouping nearby stars after a stop while the probe is still slow.
 
 **Stars move.** Every star has a space velocity (proper motion plus radial velocity). Over a mission lasting thousands of years they drift noticeably: Barnard's Star moves about half a light-year per thousand years. Each leg aims at where the star *will be* when the probe arrives, solved by iterating the intercept.
 
-**The score is mission time.** Every node computes a greedy route ("fly to whichever star you can reach soonest") as the baseline. A route 10% faster makes the hash target (1/0.9)¹² ≈ 3.5× easier. In testing, optimised routes were about 13% faster than greedy (6–24%), for missions of roughly 2,000–4,000 years. Everything (positions, velocities, times) is whole-number arithmetic, so every node and phone computes identical results; the app's timing matches the node's on 200 of 200 test routes.
+**The score is mission time.** Every node computes a greedy route ("fly to whichever star you can reach soonest") as the baseline. A route 10% faster makes the hash target (1/0.9)¹² ≈ 3.5× easier. In testing, optimised routes were 7–23% faster than greedy, for missions of roughly 2,500–4,000 years. Everything (positions, velocities, speeds, times) is whole-number arithmetic, so every node and phone computes identical results; the app's timing matches the node's on 240 of 240 test routes and 3,000 of 3,000 individual legs.
 
 **Why keep hashing at all?** Route quality alone can't set a steady block time, and the best route for a block would quickly become a known answer. The hash keeps blocks unpredictable and lets difficulty adjust; the route bonus makes optimisation the thing that wins.
 
-**On the phone.** The rig plans each new block's route for about 2.5 seconds (a fast optimiser on mid-mission star positions, then an exact polish scored by true mission time), starts hashing, then keeps refining every 10 seconds. The RIG screen shows the live route, e.g. `ROUTE 24★ · 2,873 YR · 287 LY · 14.6% FASTER THAN GREEDY`.
+**On the phone.** The rig plans each new block's route for about 2.5 seconds (a fast optimiser on mid-mission star positions, then an exact polish scored by true mission time), starts hashing, then keeps refining every 10 seconds. The RIG screen shows the live route, e.g. `ROUTE 24★ · 4 STOPS · 2,873 YR · 287 LY · 14.6% FASTER THAN GREEDY`. On the MAP tab, survey stops are marked ◆; tap a star to see when the probe gets there and how fast it's going.
 
-**The map.** `GET /routes` lists recent routes by star name with mission time, distance flown, improvement and the miner's username. `GET /stars` shows the catalog with velocities.
+**The map.** `GET /routes` lists recent routes by star name with mission time, distance flown, survey stops, improvement and the miner's username. `GET /mining/work` includes the block's `stops`. `GET /stars` shows the catalog with velocities.
 
 **Using real star data.** The built-in catalog has ~50 well-known nearby systems with approximate positions and motions. For a serious network, build a catalog from the HYG database (positions and velocities from the Hipparcos and Gaia surveys):
 
@@ -118,7 +122,7 @@ python tools/build_catalog.py hygdata_v41.csv --max-ly 50 -o stars.json
 
 Every node must use the same catalog (`GET /info` shows a `catalog_id` to compare), and changing it starts a new chain. Afterwards, run `python tools/gen_solo_data.py` so the app's solo mode matches, then rebuild the app.
 
-**Limits.** The probe flies past stars at constant speed: no acceleration, deceleration or stops yet, and gravity is ignored. ROADMAP.md lists these as next steps.
+**Limits.** Acceleration is constant (about 0.03 g) with no fuel limit, travel is in straight lines, and gravity and relativity are ignored (at 0.1c relativity changes times by only 0.5%). ROADMAP.md lists next steps.
 
 ## Mining other coins (Bitcoin and friends)
 
@@ -196,7 +200,7 @@ Nodes forward new blocks and transactions to each other and re-sync every 30 sec
 | GET | `/info` | height, tip hash, current target, peers |
 | GET | `/chain`, `/blocks/<height>` | block data |
 | GET | `/balance/<address>` | balance and next nonce |
-| POST | `/tx` | submit a signed transaction |
+| POST | `/tx` | submit a signed transaction, or a fee-free username claim (`"type": "name"`, with proof of work; `/info` gives `name_pow_bits`) |
 | GET | `/mining/work?address=…` | get a job: this block's stars, baseline route, base target |
 | POST | `/mining/route` | `{ "job_id", "route" }` → header prefix and the route's target |
 | POST | `/mining/submit` | `{ "job_id", "route", "nonce" }` |

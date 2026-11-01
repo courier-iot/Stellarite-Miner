@@ -94,6 +94,7 @@ def info():
             "mempool": len(chain.mempool), "peers": sorted(peers),
             "target_block_seconds": C.TARGET_BLOCK_SECONDS,
             "units_per_coin": C.UNITS_PER_COIN,
+            "name_pow_bits": C.NAME_POW_BITS,
             "catalog_id": stars.CATALOG_ID,
             "stars_per_block": stars.STARS_PER_PROBLEM,
         })
@@ -236,14 +237,17 @@ def mining_work():
     except ValidationError as e:
         return err(str(e))
     problem = stars.problem(template["prev_hash"])
-    baseline = stars.baseline_route(problem)
+    stop_ids = stars.stops(template["prev_hash"])
+    baseline = stars.baseline_route(problem, stop_ids)
     return jsonify({
         "job_id": job_id,
         "height": template["height"],
         "stars": [dict(stars.CATALOG[i]) for i in problem],
+        "stops": stop_ids,
         "baseline_route": baseline,
-        "baseline_years": stars.route_time(baseline) / 1000,
+        "baseline_years": stars.route_time(baseline, stop_ids) / 1000,
         "probe_speed_mly_per_year": stars.SPEED,
+        "probe_accel_mly_per_year2": C.PROBE_ACCEL_MLY_PER_YEAR2,
         "launch_t": stars.LAUNCH_T,
         "intercept_iterations": stars.INTERCEPT_ITERATIONS,
         "base_target": template["target"],
@@ -273,12 +277,13 @@ def mining_route():
         except ValidationError as e:
             return err(str(e))
     target = effective_target(block["target"], score["length"], score["baseline"])
+    stop_ids = stars.stops(block["prev_hash"])
     return jsonify({
         "prefix": header_prefix(block).hex(),
         "target": format(target, "064x"),
         "years": score["length"] / 1000,
         "baseline_years": score["baseline"] / 1000,
-        "length_ly": stars.route_length(body.get("route")) / 1000,
+        "length_ly": stars.route_length(body.get("route"), stop_ids) / 1000,
         "improvement_pct": round(100 * (1 - score["length"] / score["baseline"]), 2),
     })
 
@@ -322,6 +327,8 @@ def star_catalog():
     return jsonify({"source": stars.CATALOG_SOURCE, "catalog_id": stars.CATALOG_ID,
                     "count": len(stars.CATALOG), "stars": stars.CATALOG,
                     "probe_speed_mly_per_year": stars.SPEED, "launch_t": stars.LAUNCH_T,
+                    "probe_accel_mly_per_year2": C.PROBE_ACCEL_MLY_PER_YEAR2,
+                    "survey_stops": stars.SURVEY_STOPS,
                     "intercept_iterations": stars.INTERCEPT_ITERATIONS})
 
 

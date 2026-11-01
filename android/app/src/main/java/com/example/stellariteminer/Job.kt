@@ -30,13 +30,15 @@ interface UsefulWork {
 /** Pulsarite: the probe's route through this block's moving stars. */
 data class RouteInfo(
     val starIds: List<Int>,
-    val years: Double,           // mission time at the probe's cruise speed
+    val years: Double,           // mission time: launch from rest, cruise at 0.1c, brake at survey stops
     val baselineYears: Double,   // the greedy route's mission time
     val improvementPct: Double,
     val lightYears: Double,      // distance flown
+    val stopIds: List<Int> = emptyList(),   // survey stars where the probe stops
 ) : UsefulWork {
     override val summary get() = String.format(java.util.Locale.US,
-        "ROUTE %d★ · %,.0f YR · %.0f LY · %.1f%% FASTER THAN GREEDY", starIds.size, years, lightYears, improvementPct)
+        "ROUTE %d★ · %d STOPS · %,.0f YR · %.0f LY · %.1f%% FASTER THAN GREEDY",
+        starIds.size, stopIds.size, years, lightYears, improvementPct)
     override val gainPct get() = improvementPct
 }
 

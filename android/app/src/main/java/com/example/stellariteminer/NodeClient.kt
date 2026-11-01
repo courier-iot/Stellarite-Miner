@@ -34,7 +34,7 @@ class NodeClient(baseUrl: String, private val address: String = "", private val 
         val jobId = work.getString("job_id")
         // 1. Useful work: a fast route through this block's moving stars.
         val f = StarField.fromWork(work)
-        val key = f.ids.joinToString(",")
+        val key = f.ids.joinToString(",") + "|" + f.stop.joinToString("") { if (it) "1" else "0" }
         val fresh = key != problemKey || planner == null
         if (fresh) {
             field = f
@@ -59,7 +59,8 @@ class NodeClient(baseUrl: String, private val address: String = "", private val 
             rewardUnits = work.getLong("reward"),
             unitsPerCoin = work.getLong("units_per_coin"),
             work = RouteInfo(route, scored.getDouble("years"), scored.getDouble("baseline_years"),
-                scored.getDouble("improvement_pct"), scored.getDouble("length_ly")),
+                scored.getDouble("improvement_pct"), scored.getDouble("length_ly"),
+                (0 until f.size).filter { f.stop[it] }.map { f.ids[it] }),
         )
     }
 

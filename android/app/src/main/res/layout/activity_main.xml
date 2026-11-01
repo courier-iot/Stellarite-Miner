@@ -460,6 +460,33 @@
                         android:textSize="12sp" />
 
                     <LinearLayout
+                        android:id="@+id/nameRow"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:visibility="gone">
+
+                        <TextView
+                            android:id="@+id/nameStatus"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:textColor="@color/muted"
+                            android:textSize="11sp" />
+
+                        <Button
+                            android:id="@+id/claimName"
+                            style="?android:attr/borderlessButtonStyle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="44dp"
+                            android:letterSpacing="0.1"
+                            android:text="[CLAIM NOW]"
+                            android:textColor="@color/crimson_light"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <LinearLayout
                         android:id="@+id/soloRow"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"

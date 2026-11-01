@@ -94,6 +94,7 @@ def info():
             "mempool": len(chain.mempool), "peers": sorted(peers),
             "target_block_seconds": C.TARGET_BLOCK_SECONDS,
             "units_per_coin": C.UNITS_PER_COIN,
+            "name_pow_bits": C.NAME_POW_BITS,
             "useful_work": "spacecraft trajectories",
         })
 

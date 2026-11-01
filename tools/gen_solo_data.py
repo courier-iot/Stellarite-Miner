@@ -100,6 +100,9 @@ object SoloData {{
     val STAR_VZ = longArrayOf({vzs})
     /** The probe: speed (mly per year), launch time (milli-years after J2000), intercept iterations. */
     const val PROBE_SPEED = {stars.SPEED}L
+    /** Probe acceleration (mly/yr²) and survey stops per block. */
+    const val PROBE_ACCEL = {PC.PROBE_ACCEL_MLY_PER_YEAR2}L
+    const val SURVEY_STOPS = {stars.SURVEY_STOPS}
     const val LAUNCH_T = {stars.LAUNCH_T}L
     const val INTERCEPT_ITERATIONS = {stars.INTERCEPT_ITERATIONS}
 

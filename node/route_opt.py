@@ -96,26 +96,50 @@ def optimise(pts, seconds=2.0, sol=(0, 0, 0), seed=None):
 
 # ---- moving stars: exact mission-time scoring ---------------------------
 
+def probe_leg(d, u, stop, V, A):
+    """One leg of d micro-ly from speed u: (milli-years, end speed). Same maths as stars.leg."""
+    if not stop:
+        ramp = (V * V - u * u) // (2 * A)
+        if d >= ramp:
+            return (V - u) * 1000 // A + (d - ramp) * 1000 // V, V
+        w = math.isqrt(u * u + 2 * A * d)
+        return (w - u) * 1000 // A, w
+    brake = u * u // (2 * A)
+    if brake >= d:
+        return u * 1000 // A + 2 * math.isqrt((brake - d) * 1_000_000 // A), 0
+    up, down = (V * V - u * u) // (2 * A), V * V // (2 * A)
+    if up + down <= d:
+        return (V - u) * 1000 // A + V * 1000 // A + (d - up - down) * 1000 // V, 0
+    p = math.isqrt((2 * A * d + u * u) // 2)
+    return (p - u) * 1000 // A + p * 1000 // A, 0
+
+
 def mission_time(route_ids, work):
     """Mission time (milli-years) for star ids, using the star data in a /mining/work reply.
 
-    Same integer maths as stars.route_time, so it matches the node's score exactly.
+    Same integer maths as stars.route_time (acceleration, braking at survey stops,
+    moving stars), so it matches the node's score exactly.
     """
     by_id = {s["id"]: s for s in work["stars"]}
-    speed, t0, iters = work["probe_speed_mly_per_year"], work["launch_t"], work["intercept_iterations"]
+    V = work["probe_speed_mly_per_year"] * 1000
+    A = work["probe_accel_mly_per_year2"] * 1000
+    t0, iters = work["launch_t"], work["intercept_iterations"]
+    stop_set = set(work.get("stops", ()))
 
     def pos(s, t):
         return (s["x"] + s["vx"] * t // 1_000_000, s["y"] + s["vy"] * t // 1_000_000,
                 s["z"] + s["vz"] * t // 1_000_000)
 
-    here, t = (0, 0, 0), t0
+    here, t, u = (0, 0, 0), t0, 0
     for sid in route_ids:
-        s = by_id[sid]
-        arrive = t
+        s, stop = by_id[sid], sid in stop_set
+        arrive, speed = t, u
         for _ in range(iters):
             p = pos(s, arrive)
-            arrive = t + math.isqrt(sum((p[k] - here[k]) ** 2 for k in range(3))) * 1000 // speed
-        t, here = arrive, pos(s, arrive)
+            d = math.isqrt(sum((p[k] - here[k]) ** 2 for k in range(3)) * 1_000_000)
+            dt, speed = probe_leg(d, u, stop, V, A)
+            arrive = t + dt
+        t, here, u = arrive, pos(s, arrive), speed
     return t - t0
 
 

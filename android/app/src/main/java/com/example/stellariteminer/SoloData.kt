@@ -16,7 +16,7 @@ object SoloData {
         maxRetargetFactor = 4,
         genesisDifficultyBits = 20,
         genesisTimestamp = 1790812800L,
-        genesisMessage = "Pulsarite genesis v2 - moving stars, real travel times",
+        genesisMessage = "Pulsarite genesis v3 - acceleration, braking and survey stops",
         bonusExponent = 12,
     )
 
@@ -101,6 +101,9 @@ object SoloData {
     val STAR_VZ = longArrayOf(73, 71, 268, -96, -322, -43, -6, 6, -238, -8, 39, -67, 169, 4, -59, 48, 44, -13, 32, 62, 34, 9, -215, -155, -830, -100, 17, -103, -63, -167, -175, -108, -124, -36, -47, -75, -249, -89, 18, 29, -3, -147, 23, -6, -32, -2, -28, -2, -341, -76, 10, -6)
     /** The probe: speed (mly per year), launch time (milli-years after J2000), intercept iterations. */
     const val PROBE_SPEED = 100L
+    /** Probe acceleration (mly/yr²) and survey stops per block. */
+    const val PROBE_ACCEL = 10L
+    const val SURVEY_STOPS = 4
     const val LAUNCH_T = 100000L
     const val INTERCEPT_ITERATIONS = 3
 

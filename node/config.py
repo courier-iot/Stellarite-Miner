@@ -15,6 +15,12 @@ HALVING_INTERVAL = 100_000       # reward halves every N blocks
 MIN_FEE = 1_000                  # smallest fee a node accepts (0.00001 PLSR)
 MAX_TXS_PER_BLOCK = 500
 
+# Usernames can be claimed without coins: a name-claim transaction carries a small
+# proof of work instead of a fee (sha256d of the claim must have this many leading
+# zero bits, ~4 million tries, a few seconds on a phone). Cheap for one name,
+# expensive for squatting thousands.
+NAME_POW_BITS = int(os.environ.get("NAME_POW_BITS", "22"))
+
 TARGET_BLOCK_SECONDS = 30
 RETARGET_INTERVAL = 10           # adjust difficulty every N blocks
 MAX_RETARGET_FACTOR = 4          # never move difficulty more than 4x at once
@@ -31,11 +37,16 @@ GENESIS_TARGET = MAX_TARGET >> GENESIS_DIFFICULTY_BITS
 # better routes win blocks. See stars.py and README "Useful work".
 ROUTE_BONUS_EXPONENT = 12
 
-# The probe: launched from the Sun in LAUNCH_YEAR, cruising at a constant speed
-# (100 milli-light-years per year = 10% of light speed), flying past each star.
-# Stars move while it travels, so routes are scored by mission time.
+# The probe: launched from rest at the Sun in LAUNCH_YEAR, it accelerates to a
+# cruise speed of 10% of light speed (100 milli-light-years per year), flies past
+# most stars at whatever speed it has, and brakes to a full stop at each block's
+# survey stars. Speeding up from rest (or braking to rest) takes 10 years and
+# about half a light-year. Stars move while it travels, so routes are scored by
+# mission time.
 PROBE_SPEED_MLY_PER_YEAR = 100
+PROBE_ACCEL_MLY_PER_YEAR2 = 10      # 0 to 0.1c in 10 years (about 0.03 g)
+SURVEY_STOPS = 4                    # stars per block where the probe must stop
 LAUNCH_YEAR = 2100
 
 GENESIS_TIMESTAMP = 1_790_812_800  # 2026-10-01 00:00 UTC
-GENESIS_MESSAGE = "Pulsarite genesis v2 - moving stars, real travel times"
+GENESIS_MESSAGE = "Pulsarite genesis v3 - acceleration, braking and survey stops"

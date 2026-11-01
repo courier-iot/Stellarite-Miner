@@ -4,6 +4,7 @@
   python wallet.py address                   show your address
   python wallet.py balance [ADDRESS]         check a balance
   python wallet.py send ADDRESS AMOUNT       send coins (AMOUNT in whole coins, e.g. 1.5)
+  python wallet.py claim NAME                claim a username (no coins needed)
 
 Options: --node http://host:5000   --wallet wallet.json
 """
@@ -54,6 +55,8 @@ def main():
     sub.add_parser("new")
     sub.add_parser("address")
     b = sub.add_parser("balance"); b.add_argument("address", nargs="?")
+    cl = sub.add_parser("claim", help="claim a username without coins (does a short proof of work)")
+    cl.add_argument("name")
     s = sub.add_parser("send"); s.add_argument("to"); s.add_argument("amount")
     s.add_argument("--fee", default=str(Decimal(C.MIN_FEE) / C.UNITS_PER_COIN))
     args = ap.parse_args()
@@ -77,6 +80,28 @@ def main():
         addr = args.address or address_from_pubkey(public_key_hex(load(args.wallet)))
         r = call(args.node, f"/balance/{addr}")
         print(f"{addr}: {Decimal(r['balance']) / C.UNITS_PER_COIN} {C.TICKER}")
+        return
+
+    if args.cmd == "claim":
+        import hashlib
+        key = load(args.wallet)
+        pub = public_key_hex(key)
+        me = address_from_pubkey(pub)
+        info = call(args.node, "/info")
+        bits = info.get("name_pow_bits", 22)
+        nonce = call(args.node, f"/balance/{me}")["next_nonce"]
+        claim = {"type": "name", "from": pub, "name": args.name.strip().upper(), "nonce": nonce, "work": 0}
+        limit = 1 << (256 - bits)
+        print(f"Computing the anti-spam proof of work ({bits} bits)...")
+        while True:
+            h = hashlib.sha256(hashlib.sha256(tx_signing_bytes(claim)).digest()).digest()
+            if int.from_bytes(h, "big") < limit:
+                break
+            claim["work"] += 1
+        claim["sig"] = sign(key, tx_signing_bytes(claim))
+        r = call(args.node, "/tx", claim)
+        print(f"Claim sent: {claim['name']} is yours once the next block is mined." if r.get("ok")
+              else f"Rejected: {r.get('error')}")
         return
 
     if args.cmd == "send":

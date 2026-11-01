@@ -15,6 +15,12 @@ HALVING_INTERVAL = 100_000       # reward halves every N blocks
 MIN_FEE = 1_000                  # smallest fee a node accepts (0.00001 NBLT)
 MAX_TXS_PER_BLOCK = 500
 
+# Usernames can be claimed without coins: a name-claim transaction carries a small
+# proof of work instead of a fee (sha256d of the claim must have this many leading
+# zero bits, ~4 million tries, a few seconds on a phone). Cheap for one name,
+# expensive for squatting thousands.
+NAME_POW_BITS = int(os.environ.get("NAME_POW_BITS", "22"))
+
 TARGET_BLOCK_SECONDS = 30
 RETARGET_INTERVAL = 10           # adjust difficulty every N blocks
 MAX_RETARGET_FACTOR = 4          # never move difficulty more than 4x at once

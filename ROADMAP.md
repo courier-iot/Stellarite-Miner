@@ -6,7 +6,7 @@ Every change to how blocks are scored is a consensus change: all nodes must upgr
 
 ## Pulsarite: star routes
 
-Today: straight-line routes from the Sun through 24 stars at fixed positions, scored by total distance.
+Today: routes from the Sun through 24 moving stars, flown by a probe that accelerates to 0.1c and brakes to a stop at 4 survey stars per block, scored by mission time.
 
 - [x] **Star movement.** Stars drift across the sky (proper motion) and toward or away from us (radial velocity); over a century-long trip Barnard's Star moves about 0.05 light-years. Add `pmra`, `pmdec` and `rv` to each catalog star and compute positions at the moment the probe arrives, not today.
   - [x] `tools/build_catalog.py` reads HYG's space velocities; the built-in catalog has approximate motions.
@@ -16,11 +16,11 @@ Today: straight-line routes from the Sun through 24 stars at fixed positions, sc
   - [x] `PROBE_SPEED_MLY_PER_YEAR` (10% of c) and `LAUNCH_YEAR` (2100) in `config.py`; arrival times leg by leg.
   - [x] Each leg's intercept is iterated a fixed number of times, in integer maths.
   - [x] Mission duration shown on the HUD, the map and `/routes`.
-  - [ ] Acceleration and deceleration phases, and optional stops (decelerate at a star).
+  - [x] Acceleration and deceleration phases (10 years to or from 0.1c), and 4 survey stops per block where the probe must come to rest.
 - [ ] **Real star catalog by default.** Ship a Gaia/HYG-derived catalog of every star within 50 ly (about 1,500 stars, many of them faint red dwarfs) and record its fingerprint in the genesis block, so nodes can't disagree about it.
 - [ ] **Scale problems with the catalog.** Raise `STARS_PER_PROBLEM` from 24 to 40–60 so optimisation stays hard as phones get better at it.
 - [ ] **Science-weighted targets.** Favour stars with known exoplanets or habitable-zone planets (from the NASA Exoplanet Archive), so routes prioritise worthwhile destinations. Score science value per year of travel.
-- [ ] **Stop vs flyby.** Let a route mark stars as flybys (pass through) or stops (decelerate). Stopping costs time, and fuel once fuel is modelled.
+- [ ] **Fuel and dwell time.** Survey stops exist; next, give each stop a survey duration and model propellant (rocket equation), so the trade-off between speed and fuel becomes part of the score.
 - [ ] **Best-known route archive.** Keep the best route ever found for each star set, so the map improves over time instead of only growing.
 - [x] **3D route map in the app** (MAP tab).
 - [ ] **3D route map on the web.** A page served by the node that draws recent routes among the stars.
@@ -60,7 +60,7 @@ Today: planets on circular, flat orbits; Lambert transfers between planets; patc
 ## Usernames
 
 - [x] Claimed in the coinbase of a mined block; unique per network; switching releases the old name; send coins to a name.
-- [ ] Claim a name without mining (a signed name transaction with a fee), so new users can register before their first block.
+- [x] Claim a name without mining: a fee-free signed name transaction with a small proof of work against spam ([CLAIM NOW] in the app, `wallet.py claim`).
 - [ ] Profile data next to names (avatar colour, team), and name expiry for abandoned names.
 
 ## Done
@@ -75,3 +75,4 @@ Today: planets on circular, flat orbits; Lambert transfers between planets; patc
 - [x] In-app wallet compatible with wallet.py; start scripts for Windows/Mac/Linux; Docker + Caddy cloud deployment
 - [x] First-run setup (username, wallet with backup check, where to mine); on-chain usernames; sending coins (RFC 6979 signatures)
 - [x] Pulsarite: moving stars and probe travel time, scored by mission time
+- [x] Pulsarite: acceleration, braking and survey stops; usernames claimable without mining

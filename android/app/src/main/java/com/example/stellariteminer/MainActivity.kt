@@ -56,6 +56,10 @@ class MainActivity : Activity() {
     private lateinit var walletRow: View
     private lateinit var balance: TextView
     private lateinit var soloRow: View
+    private lateinit var nameRow: View
+    private lateinit var nameStatus: TextView
+    private var claiming = false
+    private val pendingClaims = mutableMapOf<String, String>()   // coin id -> name sent, waiting for a block
     private var lastBalanceCheck = 0L
     private lateinit var rigPage: ScrollView
     private lateinit var ledgerPage: ScrollView
@@ -125,6 +129,8 @@ class MainActivity : Activity() {
         walletRow = findViewById(R.id.walletRow)
         balance = findViewById(R.id.balance)
         soloRow = findViewById(R.id.soloRow)
+        nameRow = findViewById(R.id.nameRow)
+        nameStatus = findViewById(R.id.nameStatus)
         rigPage = findViewById(R.id.rigPage)
         ledgerPage = findViewById(R.id.ledgerPage)
         tabRig = findViewById(R.id.tabRig)
@@ -176,6 +182,7 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.importKey).setOnClickListener { importKey() }
         findViewById<Button>(R.id.pushChain).setOnClickListener { pushChain() }
         findViewById<Button>(R.id.resetSolo).setOnClickListener { resetSolo() }
+        findViewById<Button>(R.id.claimName).setOnClickListener { claimName() }
         tabRig.setOnClickListener { showPage(PAGE_RIG) }
         tabMap.setOnClickListener { showPage(PAGE_MAP) }
         tabLedger.setOnClickListener { showPage(PAGE_LEDGER) }
@@ -397,7 +404,7 @@ class MainActivity : Activity() {
         val c = prefs.coin
         val addr = user.text.toString().trim()
         if (c.kind == WorkKind.NONE || !addr.startsWith(c.addressPrefix) || addr.length != c.addressLength) {
-            balance.text = ""; return
+            balance.text = ""; if (!claiming) nameRow.visibility = View.GONE; return
         }
         val now = System.currentTimeMillis()
         if (prefs.isSolo) {
@@ -406,18 +413,93 @@ class MainActivity : Activity() {
             val chain = SoloBackend.chainFor(this, c)
             balance.text = "> BALANCE ${Format.coins(chain.balance(addr), chain.rules.unitsPerCoin, 2)} ${c.ticker} " +
                 "· solo chain height ${chain.height}"
+            if (!claiming) nameRow.visibility = View.GONE   // solo blocks carry the name in their coinbase
             return
         }
         val nodeUrl = url.text.toString().trim()
         if (nodeUrl.isEmpty() || (!force && now - lastBalanceCheck < 15000)) return
         lastBalanceCheck = now
         Thread {
+            var onChainName: String? = null
             val text = try {
                 val (code, body) = NodeClient(nodeUrl).request("GET", "/balance/$addr", null)
-                if (code == 200) "> BALANCE ${Format.coins(body.getLong("balance"), body.optLong("units_per_coin", 100_000_000L), 2)} ${c.ticker} · on node"
-                else ""
+                if (code == 200) {
+                    onChainName = body.optString("name", "")
+                    "> BALANCE ${Format.coins(body.getLong("balance"), body.optLong("units_per_coin", 100_000_000L), 2)} ${c.ticker} · on node"
+                } else ""
             } catch (e: Exception) { "" }
-            runOnUiThread { if (prefs.coin.id == c.id) balance.text = text }
+            runOnUiThread {
+                if (prefs.coin.id != c.id) return@runOnUiThread
+                balance.text = text
+                if (!claiming) showNameStatus(addr, onChainName)
+            }
+        }.start()
+    }
+
+    /**
+     * The username line under the balance: whether the setup username is on this
+     * coin's chain yet, with [CLAIM NOW] when it isn't (node mode, phone's own wallet).
+     */
+    private fun showNameStatus(addr: String, onChain: String?) {
+        val want = prefs.username
+        val mine = prefs.wallet.address(prefs.coin.addressPrefix) == addr
+        if (onChain == null || want.isEmpty() || !mine) { nameRow.visibility = View.GONE; return }
+        when {
+            onChain == want -> { pendingClaims.remove(prefs.coin.id); nameStatus.text = "> USERNAME $want · on-chain ✓"; claimButton(false) }
+            onChain.isNotEmpty() -> { nameStatus.text = "> USERNAME on-chain: $onChain · setup name $want"; claimButton(true, "[SWITCH]") }
+            pendingClaims[prefs.coin.id] == want -> { nameStatus.text = "> USERNAME $want · claim sent, waiting for the next block"; claimButton(false) }
+            else -> { nameStatus.text = "> USERNAME $want · not on-chain yet (mining a block also claims it)"; claimButton(true) }
+        }
+        nameRow.visibility = View.VISIBLE
+    }
+
+    private fun claimButton(show: Boolean, label: String = "[CLAIM NOW]") {
+        findViewById<Button>(R.id.claimName).apply { visibility = if (show) View.VISIBLE else View.GONE; text = label }
+    }
+
+    /** Registers the username with a fee-free name transaction (small proof of work on the phone). */
+    private fun claimName() {
+        saveSettings()
+        val c = prefs.coin
+        val name = prefs.username
+        if (claiming || name.isEmpty()) return
+        if (!prefs.wallet.hasKey()) { showAlert("Make or import a wallet first ([NEW WALLET] or [IMPORT KEY]).", user); return }
+        val nodeUrl = prefs.url(c.id)
+        if (prefs.isSolo || nodeUrl.isBlank()) { showAlert("Claiming a name needs a node: turn SOLO MODE off and set NODE_URI.", url); return }
+        val me = prefs.wallet.address(c.addressPrefix)!!
+        claiming = true
+        claimButton(false)
+        nameStatus.text = "> CLAIMING $name · checking…"
+        Thread {
+            val msg = try {
+                val http = NodeClient(nodeUrl)
+                val (ic, info) = http.request("GET", "/info", null)
+                val bits = if (ic == 200) info.optInt("name_pow_bits", 22) else 22
+                val (nc, owner) = http.request("GET", "/name/$name", null)
+                if (nc == 200 && owner.optString("address") != me) "CLAIM FAILED · $name already belongs to someone else on ${c.name}"
+                else {
+                    val (bc, bal) = http.request("GET", "/balance/$me", null)
+                    if (bc != 200) "CLAIM FAILED · couldn't read your account from the node"
+                    else {
+                        val started = System.currentTimeMillis()
+                        val tx = prefs.wallet.signNameClaim(name, bal.getLong("next_nonce"), bits, progress = { n ->
+                            runOnUiThread { nameStatus.text = "> CLAIMING $name · proof of work ${n / 1000}k hashes" }
+                        })!!
+                        val secs = (System.currentTimeMillis() - started) / 1000.0
+                        val (code, body) = http.request("POST", "/tx", tx)
+                        if (code == 200 && body.optBoolean("ok"))
+                            "CLAIM SENT · $name joins the chain with the next block (work took ${"%.1f".format(Locale.US, secs)}s, no fee)"
+                        else "CLAIM FAILED · ${body.optString("error", "HTTP $code")}"
+                    }
+                }
+            } catch (e: Exception) { "CLAIM FAILED · ${friendlyError(e, nodeUrl)}" }
+            runOnUiThread {
+                claiming = false
+                nameStatus.text = "> $msg"
+                testResult.text = "> $msg"
+                if (msg.startsWith("CLAIM FAILED")) claimButton(true) else pendingClaims[c.id] = name
+                lastBalanceCheck = System.currentTimeMillis()   // let the message show before the next refresh
+            }
         }.start()
     }
 

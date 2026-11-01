@@ -127,6 +127,12 @@ CATALOG_ID = hashlib.sha256(json.dumps(
 SPEED = C.PROBE_SPEED_MLY_PER_YEAR                 # mly per year
 LAUNCH_T = (C.LAUNCH_YEAR - 2000) * 1000          # milli-years after J2000
 
+# Kinematics run in finer integer units: distances in micro-light-years (uly),
+# speeds in uly per year, acceleration in uly per year squared, times in milli-years.
+V = SPEED * 1000                                  # cruise speed, uly/yr
+A = C.PROBE_ACCEL_MLY_PER_YEAR2 * 1000            # acceleration, uly/yr^2
+SURVEY_STOPS = C.SURVEY_STOPS
+
 
 def pos(star_id, t=0):
     """Star position (mly) at time t (milli-years after J2000)."""
@@ -141,12 +147,43 @@ def distance(a, b) -> int:
     return math.isqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2)
 
 
-def intercept(here, t, star_id):
-    """Arrival time and place when a probe at `here` at time t heads for a moving star."""
-    arrive = t
+def distance_uly(a, b) -> int:
+    """Distance between mly positions, in micro-light-years (floor)."""
+    return math.isqrt(((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) * 1_000_000)
+
+
+def leg(d, u, stop):
+    """
+    One leg of d uly, starting at speed u (uly/yr). Returns (milli-years, end speed).
+
+    The probe accelerates at A towards the cruise speed V. For a flyby it keeps
+    whatever speed it has reached; for a stop it brakes at A to arrive at rest.
+    If it is already too fast to stop in time, it brakes, overshoots, and comes back.
+    """
+    if not stop:
+        ramp = (V * V - u * u) // (2 * A)                       # distance to reach V
+        if d >= ramp:
+            return (V - u) * 1000 // A + (d - ramp) * 1000 // V, V
+        w = math.isqrt(u * u + 2 * A * d)
+        return (w - u) * 1000 // A, w
+    brake = u * u // (2 * A)                                    # distance to stop from u
+    if brake >= d:                                              # overshoot, then rest-to-rest back
+        e = brake - d
+        return u * 1000 // A + 2 * math.isqrt(e * 1_000_000 // A), 0
+    up, down = (V * V - u * u) // (2 * A), V * V // (2 * A)
+    if up + down <= d:                                          # reaches cruise speed
+        return (V - u) * 1000 // A + V * 1000 // A + (d - up - down) * 1000 // V, 0
+    p = math.isqrt((2 * A * d + u * u) // 2)                    # peak speed short of V
+    return (p - u) * 1000 // A + p * 1000 // A, 0
+
+
+def intercept(here, t, star_id, u=0, stop=False):
+    """(arrival time, arrival place, speed there) for a probe at `here` at time t, speed u, heading for a moving star."""
+    arrive, speed = t, u
     for _ in range(INTERCEPT_ITERATIONS):
-        arrive = t + distance(here, pos(star_id, arrive)) * 1000 // SPEED
-    return arrive, pos(star_id, arrive)
+        dt, speed = leg(distance_uly(here, pos(star_id, arrive)), u, stop)
+        arrive = t + dt
+    return arrive, pos(star_id, arrive), speed
 
 
 def problem(prev_hash: str) -> list:
@@ -162,37 +199,52 @@ def problem(prev_hash: str) -> list:
     return sorted(chosen)
 
 
-def route_legs(route):
-    """[(star, arrival time, arrival position)] for a probe flying the route from the Sun at launch."""
-    here, t, legs = SOL, LAUNCH_T, []
+def stops(prev_hash: str) -> list:
+    """The block's survey stars: SURVEY_STOPS of its problem stars where the probe must come to rest."""
+    pool = problem(prev_hash)
+    chosen = []
+    seed = bytes.fromhex(prev_hash)
+    i = 0
+    while len(chosen) < SURVEY_STOPS:
+        r = int.from_bytes(hashlib.sha256(seed + b"stops" + i.to_bytes(4, "big")).digest(), "big")
+        chosen.append(pool.pop(r % len(pool)))
+        i += 1
+    return sorted(chosen)
+
+
+def route_legs(route, stop_ids=()):
+    """[(star, arrival time, arrival position, speed there)] for a probe launched from rest at the Sun."""
+    stop_set = set(stop_ids)
+    here, t, u, legs = SOL, LAUNCH_T, 0, []
     for sid in route:
-        t, here = intercept(here, t, sid)
-        legs.append((sid, t, here))
+        t, here, u = intercept(here, t, sid, u, sid in stop_set)
+        legs.append((sid, t, here, u))
     return legs
 
 
-def route_time(route) -> int:
-    """Mission time in milli-years: launch to the last flyby."""
-    legs = route_legs(route)
+def route_time(route, stop_ids=()) -> int:
+    """Mission time in milli-years: launch to the last star."""
+    legs = route_legs(route, stop_ids)
     return (legs[-1][1] if legs else LAUNCH_T) - LAUNCH_T
 
 
-def route_length(route) -> int:
+def route_length(route, stop_ids=()) -> int:
     """Distance flown in mly (for display)."""
     total, prev = 0, SOL
-    for _, _, p in route_legs(route):
+    for _, _, p, _ in route_legs(route, stop_ids):
         total += distance(prev, p)
         prev = p
     return total
 
 
-def baseline_route(stars) -> list:
+def baseline_route(stars, stop_ids=()) -> list:
     """Greedy route: always fly to the star you can reach soonest. The bar a miner's route is scored against."""
+    stop_set = set(stop_ids)
     left = sorted(stars)
-    here, t, route = SOL, LAUNCH_T, []
+    here, t, u, route = SOL, LAUNCH_T, 0, []
     while left:
-        best = min(left, key=lambda s: (intercept(here, t, s)[0], s))
+        best = min(left, key=lambda s: (intercept(here, t, s, u, s in stop_set)[0], s))
         left.remove(best)
-        t, here = intercept(here, t, best)
+        t, here, u = intercept(here, t, best, u, best in stop_set)
         route.append(best)
     return route

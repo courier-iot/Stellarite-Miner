@@ -52,8 +52,29 @@ def tx_sender(tx: dict) -> str:
     return address_from_pubkey(tx["from"])
 
 
+def name_claim_pow_ok(tx: dict) -> bool:
+    """A name claim's anti-spam proof of work: sha256d(claim without sig) has NAME_POW_BITS leading zeros."""
+    return int.from_bytes(sha256d(tx_signing_bytes(tx)), "big") < (1 << (256 - C.NAME_POW_BITS))
+
+
+def is_name_claim(tx) -> bool:
+    return isinstance(tx, dict) and tx.get("type") == "name"
+
+
 def check_tx_format(tx: dict):
-    """Stateless checks: shape, amounts, signature."""
+    """Stateless checks: shape, amounts, signature (and proof of work for name claims)."""
+    if is_name_claim(tx):
+        if set(tx) != {"type", "from", "name", "nonce", "work", "sig"}:
+            raise ValidationError("name claim has wrong fields")
+        for k in ("nonce", "work"):
+            if not isinstance(tx[k], int) or isinstance(tx[k], bool) or tx[k] < 0:
+                raise ValidationError(f"bad {k}")
+        check_name(tx["name"])
+        if not isinstance(tx["from"], str) or not verify(tx["from"], tx_signing_bytes(tx), tx["sig"]):
+            raise ValidationError("bad signature")
+        if not name_claim_pow_ok(tx):
+            raise ValidationError("name claim is missing its proof of work")
+        return
     required = {"from", "to", "amount", "fee", "nonce", "sig"}
     if not isinstance(tx, dict) or set(tx) != required:
         raise ValidationError("transaction has wrong fields")
@@ -202,11 +223,15 @@ class State:
         return self.nonces.get(addr, 0)
 
     def apply_tx(self, tx):
-        """Apply a regular transaction, raising ValidationError if invalid here."""
+        """Apply a transfer or a name claim, raising ValidationError if invalid here."""
         check_tx_format(tx)
         sender = tx_sender(tx)
         if tx["nonce"] != self.nonce(sender):
             raise ValidationError(f"bad nonce (expected {self.nonce(sender)})")
+        if is_name_claim(tx):
+            self.claim_name(sender, tx["name"])
+            self.nonces[sender] = tx["nonce"] + 1
+            return
         cost = tx["amount"] + tx["fee"]
         if self.balance(sender) < cost:
             raise ValidationError("insufficient balance")
@@ -223,7 +248,7 @@ class State:
             if tx.get("coinbase"):
                 raise ValidationError("extra coinbase")
             self.apply_tx(tx)
-            fees += tx["fee"]
+            fees += tx.get("fee", 0)
         cb = txs[0]
         if block["height"] == 0:
             return
@@ -374,7 +399,14 @@ class Blockchain:
         sender = tx_sender(tx)
         if tx["nonce"] < self.state.nonce(sender):
             raise ValidationError("nonce already used")
-        if tx["amount"] + tx["fee"] > self.state.balance(sender):
+        if is_name_claim(tx):
+            owner = self.state.name_owner(tx["name"])
+            if owner is not None and owner != sender:
+                raise ValidationError(f"name {tx['name']} is taken")
+            if any(is_name_claim(t) and t["name"] == tx["name"] and tx_sender(t) != sender
+                   for t in self.mempool.values()):
+                raise ValidationError(f"someone else's claim for {tx['name']} is already waiting to be mined")
+        elif tx["amount"] + tx["fee"] > self.state.balance(sender):
             raise ValidationError("insufficient balance")
         tid = txid(tx)
         self.mempool[tid] = tx
@@ -412,7 +444,7 @@ class Blockchain:
             except ValidationError:
                 continue
             chosen.append(tx)
-            fees += tx["fee"]
+            fees += tx.get("fee", 0)
         height = self.tip["height"] + 1
         coinbase = {"coinbase": True, "to": miner_address,
                     "amount": block_reward(height) + fees, "height": height}
