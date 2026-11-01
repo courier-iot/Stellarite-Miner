@@ -15,23 +15,22 @@ import kotlin.math.sqrt
 
 /**
  * Nebulite trajectory physics: a Kotlin port of nebulite/trajectory.py.
- * Planets follow JPL's approximate Keplerian elements (elliptical, inclined
- * orbits, 3D). The phone uses this to search for cheap missions and to draw the
- * orbit map; the node does the official scoring. All constants and planet data
- * come from the node (/mining/work or /planets), so the phone always uses the
- * same model as the network.
+ * Planets follow the full VSOP87A theory ([Vsop87], about 1 arcsecond accuracy).
+ * The phone uses this to search for cheap missions and to draw the orbit map; the
+ * node does the official scoring. Constants come from the node (/mining/work or
+ * /planets), and the node's `ephemeris_id` must match the app's planet data.
  */
 class TrajectoryModel(work: JSONObject) {
     class Planet(val name: String, val code: String, val gm: Double, val radius: Double,
-                 val el: DoubleArray, val rate: DoubleArray)   // a, e, i, L, peri, node (+ rates per century)
+                 val el: DoubleArray, val rate: DoubleArray)   // mean a, e, i, L, peri, node (+ rates): sizes only
 
     val planets: List<Planet>
     val muSun: Double
-    private val kms: Double
+    val kms: Double
     private val timePenalty: Double
     val minLegDays: Int
     private val flybySafety: Double
-    private val minFlybyVinf: Double
+    val minFlybyVinf: Double
     private val minPerihelion: Double
     private val keplerIterations: Int
 
@@ -64,6 +63,11 @@ class TrajectoryModel(work: JSONObject) {
         minFlybyVinf = ph.getDouble("min_flyby_vinf")
         minPerihelion = ph.getDouble("min_perihelion_au")
         keplerIterations = ph.optInt("kepler_iterations", 12)
+        // The node and the app must use the same planet data; older nodes didn't say which they used.
+        val nodeEphemeris = ph.optString("ephemeris_id", "")
+        val mine = Vsop87.ensureLoaded()
+        if (nodeEphemeris.isNotEmpty() && nodeEphemeris != mine)
+            throw IllegalStateException("This app's planet data ($mine) doesn't match the node's ($nodeEphemeris): update the app or the node")
         val m = work.optJSONObject("mission")
         target = m?.getInt("target") ?: 4
         windowStart = m?.getInt("window_start") ?: 0
@@ -74,32 +78,8 @@ class TrajectoryModel(work: JSONObject) {
         missionType = m?.optString("type", "science") ?: "science"
     }
 
-    /** Heliocentric ecliptic position (AU) and velocity (AU/day): x, y, z, vx, vy, vz. */
-    fun state(pid: Int, day: Double): DoubleArray {
-        val p = planets[pid]
-        val t = day / 36525.0
-        val a = p.el[0] + p.rate[0] * t
-        val e = p.el[1] + p.rate[1] * t
-        val inc = p.el[2] + p.rate[2] * t
-        val l = p.el[3] + p.rate[3] * t
-        val peri = p.el[4] + p.rate[4] * t
-        val node = p.el[5] + p.rate[5] * t
-        val mDeg = (l - peri) % 360.0
-        val m = Math.toRadians(if (mDeg < 0) mDeg + 360.0 else mDeg)
-        val w = Math.toRadians(peri - node); val o = Math.toRadians(node); val i = Math.toRadians(inc)
-        var ea = m + e * sin(m)
-        repeat(keplerIterations) { ea -= (ea - e * sin(ea) - m) / (1 - e * cos(ea)) }
-        val cE = cos(ea); val sE = sin(ea); val b = sqrt(1 - e * e)
-        val xp = a * (cE - e); val yp = a * b * sE
-        val edot = sqrt(muSun / (a * a * a)) / (1 - e * cE)
-        val vxp = -a * sE * edot; val vyp = a * b * cE * edot
-        val cw = cos(w); val sw = sin(w); val cO = cos(o); val sO = sin(o); val ci = cos(i); val si = sin(i)
-        val r11 = cw * cO - sw * sO * ci; val r12 = -sw * cO - cw * sO * ci
-        val r21 = cw * sO + sw * cO * ci; val r22 = -sw * sO + cw * cO * ci
-        val r31 = sw * si; val r32 = cw * si
-        return doubleArrayOf(r11 * xp + r12 * yp, r21 * xp + r22 * yp, r31 * xp + r32 * yp,
-            r11 * vxp + r12 * vyp, r21 * vxp + r22 * vyp, r31 * vxp + r32 * vyp)
-    }
+    /** Heliocentric ecliptic J2000 position (AU) and velocity (AU/day): x, y, z, vx, vy, vz (full VSOP87A). */
+    fun state(pid: Int, day: Double): DoubleArray = Vsop87.state(pid, day)
 
     private fun stumpff(psi: Double): Pair<Double, Double> = when {
         psi > 1e-6 -> { val s = sqrt(psi); (1 - cos(s)) / psi to (s - sin(s)) / (s * s * s) }
@@ -111,7 +91,7 @@ class TrajectoryModel(work: JSONObject) {
      * Prograde zero-revolution Lambert solver in 3D. r1, r2: positions (first 3 entries used).
      * Returns v1 (3) + v2 (3) in AU/day, or null.
      */
-    fun lambert(r1: DoubleArray, r2: DoubleArray, tof: Double): DoubleArray? {
+    fun lambert(r1: DoubleArray, r2: DoubleArray, tof: Double, minPeri: Double = minPerihelion): DoubleArray? {
         val n1 = sqrt(r1[0] * r1[0] + r1[1] * r1[1] + r1[2] * r1[2])
         val n2 = sqrt(r2[0] * r2[0] + r2[1] * r2[1] + r2[2] * r2[2])
         val cosDnu = max(-1.0, min(1.0, (r1[0] * r2[0] + r1[1] * r2[1] + r1[2] * r2[2]) / (n1 * n2)))
@@ -123,9 +103,13 @@ class TrajectoryModel(work: JSONObject) {
         var lo = -400.0; var hi = 4 * PI * PI; var psi = 0.0
         repeat(80) {
             val (c2, c3) = stumpff(psi)
-            val y = n1 + n2 + a * (psi * c3 - 1) / sqrt(c2)
-            if (a > 0 && y < 0) {
+            val y = if (c2 > 0) n1 + n2 + a * (psi * c3 - 1) / sqrt(c2) else Double.NaN
+            if (c2 <= 0) {
+                hi = psi                       // at the one-revolution limit: psi is too large
+            } else if (a > 0 && y < 0) {
                 lo = psi
+            } else if (y <= 0) {
+                hi = psi                       // long-way transfer past its limit (as trajectory.lambert)
             } else {
                 val chi = sqrt(y / c2)
                 val dt = (chi * chi * chi * c3 + a * sqrt(y)) / sqrt(muSun)
@@ -134,8 +118,9 @@ class TrajectoryModel(work: JSONObject) {
             psi = (lo + hi) / 2
         }
         val (c2, c3) = stumpff(psi)
+        if (c2 <= 0) return null
         val y = n1 + n2 + a * (psi * c3 - 1) / sqrt(c2)
-        if (y <= 0) return null
+        if (!(y > 0)) return null
         val chi = sqrt(y / c2)
         if (abs((chi * chi * chi * c3 + a * sqrt(y)) / sqrt(muSun) - tof) > 1e-6 * tof) return null
         val f = 1 - y / n1
@@ -150,11 +135,11 @@ class TrajectoryModel(work: JSONObject) {
         val h2 = hx * hx + hy * hy + hz * hz
         val energy = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) / 2 - muSun / n1
         val ecc = sqrt(max(0.0, 1 + 2 * energy * h2 / (muSun * muSun)))
-        if (h2 / muSun / (1 + ecc) < minPerihelion) return null
+        if (h2 / muSun / (1 + ecc) < minPeri) return null
         return v
     }
 
-    private fun flybyDv(pid: Int, vin: DoubleArray, vout: DoubleArray): Double {
+    fun flybyDv(pid: Int, vin: DoubleArray, vout: DoubleArray): Double {
         val p = planets[pid]
         val a = norm(vin); val b = norm(vout)
         var dv = abs(b - a)
@@ -226,12 +211,12 @@ class TrajectoryModel(work: JSONObject) {
         return out
     }
 
-    private fun deriv(s: DoubleArray): DoubleArray {
+    fun deriv(s: DoubleArray): DoubleArray {
         val r = sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]); val k = -muSun / (r * r * r)
         return doubleArrayOf(s[3], s[4], s[5], k * s[0], k * s[1], k * s[2])
     }
 
-    private fun rk4(s: DoubleArray, h: Double): DoubleArray {
+    fun rk4(s: DoubleArray, h: Double): DoubleArray {
         fun add(a: DoubleArray, b: DoubleArray, f: Double) = DoubleArray(6) { a[it] + f * b[it] }
         val k1 = deriv(s); val k2 = deriv(add(s, k1, h / 2)); val k3 = deriv(add(s, k2, h / 2)); val k4 = deriv(add(s, k3, h))
         return DoubleArray(6) { s[it] + h / 6 * (k1[it] + 2 * k2[it] + 2 * k3[it] + k4[it]) }
@@ -259,10 +244,14 @@ class TrajectoryModel(work: JSONObject) {
         return List(n + 1) { k -> state(pid, day + period * k / n).copyOfRange(0, 3) }
     }
 
-    fun pathName(seq: IntArray) = seq.joinToString("-") { planets[it].code }
+    fun pathName(seq: IntArray) = seq.joinToString("-") { if (it == SUN) "Sun" else planets[it].code }
+
+    /** The block's escape mission, if this model was built for one (else null). */
+    val escape: EscapeMission? = work.optJSONObject("mission")?.takeIf { it.optString("type") == "escape" }?.let { EscapeMission(it) }
 
     companion object {
         const val EARTH = 2
+        const val SUN = 8                 // pseudo-body: an escape mission's Sun dive (as trajectory.SUN)
 
         /** Calendar date (YYYY-MM-DD) of a mission day number: days since J2000 (noon, 1 Jan 2000). */
         fun dateOf(day: Number): String = java.time.LocalDateTime.of(2000, 1, 1, 12, 0)

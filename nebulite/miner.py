@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 
 import trajectory as T
-from traj_opt import optimise
+from traj_opt import plan
 
 REFRESH_SECONDS = 15
 PLAN_SECONDS = 4
@@ -56,14 +56,21 @@ def main():
         work = call(f"{node}/mining/work?address={args.address}")
         if "job_id" not in work:
             raise SystemExit(f"Node refused work: {work}")
-        seq, days, _ = optimise(work["mission"], seconds=args.plan_seconds)
-        scored = call(f"{node}/mining/trajectory", {"job_id": work["job_id"], "seq": seq, "days": days})
+        mission = work["mission"]
+        p = plan(mission, seconds=args.plan_seconds, start=work["baseline"])
+        seq, days, esc = p["seq"], p["days"], p.get("escape")
+        scored = call(f"{node}/mining/trajectory", {"job_id": work["job_id"], "seq": seq, "days": days, "escape": esc})
         if "prefix" not in scored:
             print("Trajectory refused:", scored.get("error"))
             continue
-        path = "-".join(T.PLANETS[p][1] for p in seq)
-        desc = (f"{work['mission']['type']} mission {path}: {scored['dv_kms']:.2f} km/s, {scored['years']:.1f} yr, "
-                f"arriving {scored['arrival_date']} ({scored['improvement_pct']:+.1f}% vs direct)")
+        path = "-".join(T.body_name(b) if b == T.SUN else T.PLANETS[b][1] for b in seq)
+        if mission["type"] == "escape":
+            desc = (f"escape toward {mission['target_star']['name']} via {path}: {scored['vinf_kms']:.1f} km/s "
+                    f"({scored['au_per_year']:.2f} AU/yr), 550 AU in {scored['years']:.0f} yr "
+                    f"({scored['improvement_pct']:+.1f}% vs baseline)")
+        else:
+            desc = (f"{mission['type']} mission {path}: {scored['dv_kms']:.2f} km/s, {scored['years']:.1f} yr, "
+                    f"arriving {scored['arrival_date']} ({scored['improvement_pct']:+.1f}% vs direct)")
         prefix, target = bytes.fromhex(scored["prefix"]), int(scored["target"], 16)
         t0 = time.time()
         nonce, tried = search(prefix, target, int.from_bytes(os.urandom(8), "big") >> 2,
@@ -71,7 +78,8 @@ def main():
         if nonce is None:
             print(f"height {work['height']}: {desc}, {tried / (time.time() - t0) / 1000:.0f} kH/s, refreshing")
             continue
-        r = call(f"{node}/mining/submit", {"job_id": work["job_id"], "seq": seq, "days": days, "nonce": nonce})
+        r = call(f"{node}/mining/submit", {"job_id": work["job_id"], "seq": seq, "days": days, "escape": esc,
+                                           "nonce": nonce})
         if r.get("ok"):
             found += 1
             print(f"Found block {r['height']}: {desc}")

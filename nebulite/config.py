@@ -36,10 +36,13 @@ GENESIS_TARGET = MAX_TARGET >> GENESIS_DIFFICULTY_BITS
 # than the direct-transfer baseline makes the block's hash target
 # R^TRAJECTORY_BONUS_EXPONENT times easier to hit. See trajectory.py.
 TRAJECTORY_BONUS_EXPONENT = 12
+# Only the first 1.6x of improvement over the baseline counts (8/5), so a block whose
+# baseline is weak (some escape windows) can't become effectively free to mine.
+BONUS_RATIO_CAP_NUM, BONUS_RATIO_CAP_DEN = 8, 5
 # Nodes recompute costs with floating point; claimed costs may differ from a
 # node's own result by at most this much (m/s) so tiny rounding differences
 # between computers can't split the network.
 COST_TOLERANCE_MPS = 1
 
 GENESIS_TIMESTAMP = 1_790_812_800  # 2026-10-01 00:00 UTC
-GENESIS_MESSAGE = "Nebulite genesis v2 - science, cargo and crewed missions"
+GENESIS_MESSAGE = "Nebulite genesis v4 - escape missions toward Pulsarite stars"

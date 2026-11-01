@@ -104,7 +104,9 @@ def tx_root(txs) -> str:
 def trajectory_text(tr) -> str:
     if not tr:
         return ""
-    return (",".join(map(str, tr["seq"])) + "@" + ",".join(map(str, tr["days"])) +
+    esc = tr.get("escape")
+    extra = "#" + ",".join(f"{k}={esc[k]}" for k in sorted(esc)) if esc else ""
+    return (",".join(map(str, tr["seq"])) + "@" + ",".join(map(str, tr["days"])) + extra +
             f"${tr['cost']}${tr['baseline']}")
 
 
@@ -115,13 +117,24 @@ def header_prefix(block: dict) -> bytes:
     ).encode()
 
 
-def score_trajectory(prev_hash: str, seq, days) -> dict:
+def score_trajectory(prev_hash: str, seq, days, escape=None) -> dict:
     """Check a trajectory against this block's mission and compute its cost.
 
-    Returns {"cost", "baseline", "eval"} with costs rounded to whole m/s.
+    Returns {"cost", "baseline", "eval"} with costs rounded to whole numbers: m/s-equivalent
+    for planet missions, days from launch to 550 AU for escape missions.
     Raises ValidationError if the trajectory breaks the mission rules or is impossible.
     """
     prob = T.problem(prev_hash)
+    if prob["type"] == "escape":
+        err = T.escape_check(prob, seq, days, escape)
+        if err:
+            raise ValidationError(err)
+        ev = T.escape_evaluate(prob, seq, days, escape)
+        if ev is None:
+            raise ValidationError("escape trajectory is not possible within the launch and fuel limits")
+        return {"cost": round(ev["cost"]), "baseline": round(T.escape_baseline(prev_hash)["cost"]), "eval": ev}
+    if escape is not None:
+        raise ValidationError("this block's mission isn't an escape mission")
     err = T.check(prob, seq, days)
     if err:
         raise ValidationError(err)
@@ -133,10 +146,10 @@ def score_trajectory(prev_hash: str, seq, days) -> dict:
 
 def verify_trajectory(prev_hash: str, tr) -> dict:
     """Validate a block's claimed trajectory and costs; returns the claimed costs."""
-    if (not isinstance(tr, dict) or set(tr) != {"seq", "days", "cost", "baseline"}
+    if (not isinstance(tr, dict) or set(tr) - {"escape"} != {"seq", "days", "cost", "baseline"}
             or any(not isinstance(tr[k], int) or isinstance(tr[k], bool) for k in ("cost", "baseline"))):
-        raise ValidationError("block needs a trajectory {seq, days, cost, baseline}")
-    sc = score_trajectory(prev_hash, tr["seq"], tr["days"])
+        raise ValidationError("block needs a trajectory {seq, days, cost, baseline} (+ escape)")
+    sc = score_trajectory(prev_hash, tr["seq"], tr["days"], tr.get("escape"))
     if abs(tr["cost"] - sc["cost"]) > C.COST_TOLERANCE_MPS:
         raise ValidationError("claimed trajectory cost doesn't match")
     if abs(tr["baseline"] - sc["baseline"]) > C.COST_TOLERANCE_MPS:
@@ -147,6 +160,7 @@ def verify_trajectory(prev_hash: str, tr) -> dict:
 def effective_target(base_target_hex: str, cost: int, baseline: int) -> int:
     """Base target scaled by (baseline / cost)^k: cheaper trajectories are easier to mine."""
     k = C.TRAJECTORY_BONUS_EXPONENT
+    cost = max(cost, -(-baseline * C.BONUS_RATIO_CAP_DEN // C.BONUS_RATIO_CAP_NUM))   # cap: at most 1.6x better counts
     t = int(base_target_hex, 16) * baseline ** k // max(cost, 1) ** k
     return max(1, min(t, C.MAX_TARGET))
 
@@ -463,12 +477,39 @@ class Blockchain:
         block["hash"] = ""
         return block
 
+    def _escape_row(self, b, tr, prob):
+        ev = T.escape_evaluate(prob, tr["seq"], tr["days"], tr["escape"])
+        enc = [{"planet": T.body_name(p), "date": T.date_of(d)} for p, d in zip(tr["seq"], tr["days"])]
+        if ev["perihelion_day"] is not None:
+            enc.append({"planet": "Sun", "date": T.date_of(ev["perihelion_day"]),
+                        "perihelion_au": tr["escape"]["rp_mau"] / 1000})
+        star = prob["target_star"]
+        return {
+            "height": b["height"], "miner": b["txs"][0]["to"], "timestamp": b["timestamp"],
+            "miner_name": self.state.name_of.get(b["txs"][0]["to"]),
+            "mission_type": "escape", "target_star": star["name"], "target_star_id": star["id"], "star_dir": star["dir"],
+            "path": [T.body_name(p) for p in tr["seq"]] + ["550 AU"], "seq": tr["seq"], "days": tr["days"],
+            "escape": tr["escape"],
+            "dv_kms": round(ev["launch_kms"] + ev["burns_total_kms"], 3), "launch_kms": round(ev["launch_kms"], 3),
+            "burns_kms": round(ev["burns_total_kms"], 3),
+            "vinf_kms": round(ev["vinf_kms"], 3), "au_per_year": round(ev["au_per_year"], 3),
+            "years": round(ev["years"], 2), "years_to_star": round(ev["years_to_star"]),
+            "cost": tr["cost"], "baseline": tr["baseline"],
+            "improvement_pct": round(100 * (1 - tr["cost"] / tr["baseline"]), 2),
+            "launch_date": T.date_of(tr["days"][0]),
+            "arrival_date": T.date_of(tr["days"][0] + ev["cost"]),      # passing 550 AU
+            "encounters": enc,
+        }
+
     def mission_stats(self, limit=20):
         """The mission log: recent blocks' trajectories and how they beat the direct route."""
         out = []
         for b in reversed(self.blocks[1:][-limit:]):
             tr = b["trajectory"]
             prob = T.problem(b["prev_hash"])
+            if prob["type"] == "escape":
+                out.append(self._escape_row(b, tr, prob))
+                continue
             ev = T.evaluate(tr["seq"], tr["days"], prob["time_penalty_mps_per_year"])
             out.append({
                 "height": b["height"], "miner": b["txs"][0]["to"], "timestamp": b["timestamp"],

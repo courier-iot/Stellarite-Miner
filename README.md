@@ -263,19 +263,37 @@ So the same block-to-block skill pays off differently: cargo missions favour lon
 - arrival speed at the target (what must be shed to stop)
 - travel time: each year of flight counts as 50, 250 or 3,000 m/s, depending on the mission type
 
-Planets follow **real orbits**: JPL's approximate Keplerian elements with their slow drift over time, giving elliptical, tilted orbits in 3D (valid 1800–2050). Checked against reality, the model puts Mars-through-Neptune oppositions within a day of the real dates and Mars' 2003 close approach within 0.0003 AU. Flown on their actual dates, Voyager 1 and 2 need almost no fuel at their flybys, just as in reality.
+Planets follow **real orbits** from the full **VSOP87A** planetary theory: all 39,198 terms, accurate to about 1 arcsecond for thousands of years, so missions arriving in the 2060s and beyond are as accurate as near-term ones. Masses are JPL DE440 values. Checked against reality, it puts recent Mars, Jupiter and Saturn oppositions within 12 minutes of the published times, and reproduces Mars' 2003 close approach (0.372719 AU) to six decimals. Flown on their actual dates, Voyager 1 and 2 need almost no fuel at their flybys, just as in reality. [ACCURACY.md](ACCURACY.md) has the full validation, including an N-body integration to 2150.
 
 Each leg between planets is solved with Lambert's problem, the standard tool for "leave here on day A, arrive there on day B". The solver was checked against step-by-step orbit integration (agreement to 1e-11) and textbook Hohmann transfers. It refuses paths that dive inside Mercury's orbit, and flybys slower than 1 km/s, which aren't real gravity assists.
 
-**The score.** Every node computes the best *direct* transfer on a coarse grid as the baseline. A trajectory 15% cheaper than that makes the hash target (1/0.85)¹² ≈ 7× easier. In testing, the optimisers found Jupiter-assisted routes to Saturn and Uranus 14–20% cheaper than going direct, the same strategy the Voyager and Cassini missions used. Jupiter missions gain less (2–5%), because there's little to fly past on the way.
+**The score.** Every node computes the best *direct* transfer on a coarse grid as the baseline. A trajectory 15% cheaper than that makes the hash target (1/0.85)¹² ≈ 7× easier. Only the first 1.6× of improvement counts (a cap of (1.6)¹² ≈ 280× easier), so no block can become effectively free to mine. In testing, the optimisers found Jupiter-assisted routes to Saturn and Uranus 14–20% cheaper than going direct, the same strategy the Voyager and Cassini missions used. Jupiter missions gain less (2–5%), because there's little to fly past on the way.
 
-**Fair checking.** Costs involve floating-point maths, which can differ in the last digit between computers. Blocks therefore carry their claimed cost, and nodes accept it within 1 m/s of their own result, so rounding can never split the network. (The phone's Kotlin physics matches the node's Python to 0.000005 m/s across 3,600 test trajectories.)
+**Fair checking.** Costs involve floating-point maths, which can differ in the last digit between computers. Blocks therefore carry their claimed cost, and nodes accept it within 1 m/s of their own result, so rounding can never split the network. (The phone matches the node to 0.3 mm on planet positions and to 0.0000000002 m/s on mission costs.)
 
 **On the phone.** The rig plans each new mission for about 3 seconds, searching every flyby sequence with up to 2 flybys, then keeps refining every 10 seconds while it hashes. The HUD shows the live plan, e.g. `SCIENCE MISSION E-J-S · 11.53 KM/S · 8.6 YR · ARRIVES 2041-03-14 · 20.7% CHEAPER THAN DIRECT`, and the ledger records missions planned and your best mission.
 
 **The mission log.** `GET /missions` lists recent blocks' trajectories: mission type, planet path, encounter days and calendar dates (`launch_date`, `arrival_date`, `encounters`), Δv, years and improvement. `GET /mining/work` includes the mission's `type` and `time_penalty_mps_per_year`.
 
-**Limits today.** There are no deep-space engine burns or multi-loop transfers, arrival is scored as arrival speed rather than orbit insertion, and the orbital elements are fitted for 1800–2050, so very late arrivals lose some accuracy. ROADMAP.md covers each of these.
+## Nebulite × Pulsarite: leaving the solar system
+
+The two coins work as one pipeline for interstellar missions: **Nebulite plans the departure from the solar system, and Pulsarite plans the journey between the stars.**
+
+About **1 Nebulite block in 5** is an **escape mission**. The block's hash picks a target star from Pulsarite's catalog, favouring stars with known planets (the same rule as Pulsarite's survey stops). The miner must get a probe out of the solar system on a path whose final direction points **exactly** at that star, as fast as possible. The score is the **time from launch until the probe passes 550 AU**, where the Sun's gravity starts to focus light from the target star into a telescope. Pulsarite takes it from there.
+
+- **Launch:** up to 17 km/s from Earth (C3 ≈ 290 km²/s²). That's an SLS-class rocket with kick stages, the assumption of the Johns Hopkins APL Interstellar Probe study.
+- **Fuel after launch:** up to 3 km/s in total, for burns at flybys and at the Sun.
+- **Flybys:** Venus, Earth, Mars, Jupiter and Saturn, up to three. A flyby at Jupiter or Saturn can also tilt the path out of the planets' plane, toward stars far above or below it, the way Ulysses left the ecliptic.
+- **Sun dives:** a path may fall to as close as 0.05 AU (about the Parker Solar Probe's distance) and burn at perihelion, the "solar Oberth" manoeuvre. In this model dives rarely pay off: getting from Jupiter onto a sunward orbit costs most of the fuel. That matches the Interstellar Probe study's own conclusion that the manoeuvre "offers no advantage over prograde gravity assists". Miners still find the occasional geometry where one helps.
+- **Aim:** the escape asymptote points at the star to better than a billionth of a radian. The 550 AU timing is checked against a direct numerical integration.
+- **Always solvable:** a block only becomes an escape mission if the baseline search finds a working path toward its star; otherwise it's a planet mission. Every escape block therefore has at least one valid answer.
+- **Baseline:** the best of three textbook strategies on a coarse grid (direct launch, Jupiter flyby, Jupiter flyby plus Sun dive), each at the fastest speed its limits allow.
+
+Typical results in testing: the best escapes left at 30–37 km/s (**6–8 AU per year**, about twice Voyager 1's 3.6), reaching 550 AU in 70–90 years. Most were 20–30 km/s, and awkward star directions in poor launch windows can be much slower. APL's Interstellar Probe study targets about 7 AU per year with today's technology. Even so, Alpha Centauri is tens of thousands of years away at these speeds. Reaching the stars needs new propulsion, and these departures are the first leg of any such mission. The mission log, HUD, MAP tab and web map show each escape's target star, speed and the year it passes 550 AU, with a pointer toward the star.
+
+Every Nebulite node reports `star_catalog_id` in `/info`. It should equal the Pulsarite node's `catalog_id`, which confirms both coins use the same stars. `nebulite/star_targets.json` is generated from Pulsarite's catalog by `tools/gen_solo_data.py`.
+
+**Limits today.** Paths are patched conics: the planets' gravity is ignored between encounters, and flybys are treated as instantaneous. That is now the largest source of error, far above the planet positions. There are also no deep-space engine burns or multi-loop transfers, and arrival is scored as arrival speed rather than orbit insertion. ROADMAP.md covers each of these.
 
 ## The MAP tab
 

@@ -30,11 +30,13 @@ Today: routes from the Sun through 24 moving stars, flown by a probe that picks 
 
 ## Nebulite: spacecraft trajectories
 
-Today: planets on circular, flat orbits; Lambert transfers between planets; patched-conic flybys; cost = fuel (km/s) + 250 m/s per year of travel.
+Today: planets from the full VSOP87A theory (about 1″, valid for millennia); Lambert transfers between planets; patched-conic flybys; cost = fuel plus a mission-dependent price on travel time.
 
 - [x] **Real planet motion (ephemerides).** Planets follow JPL's approximate Keplerian elements and their rates (elliptical, inclined orbits, valid 1800–2050), in 3D with a 3D Lambert solver.
   - [x] Checked against reality: oppositions of Mars through Neptune land within a day of the real dates, Mars' 2003 close approach matches to 0.0003 AU, and Voyager 1 and 2 flown on their real dates need almost no flyby fuel.
-  - [ ] Missions arriving after 2050 (some Uranus and Neptune missions) use the elements beyond their fitted range; switch to JPL's long-span table (3000 BC–3000 AD) or a full ephemeris.
+  - [x] Accurate after 2050: the full VSOP87A theory replaces the 1800–2050 elements (validated against the authors' test values, real events and an N-body integration to 2150; see ACCURACY.md).
+  - [ ] **N-body path refinement:** re-fly each mined path with planetary gravity throughout and real hyperbolic flybys, so paths are accurate enough to fly, not just to rank.
+  - [ ] Optional JPL DE440 support for nodes that can download it, for a sub-kilometre reference.
   - [ ] Regression tests for Cassini (V-V-E-J-S) and Juno (E-E-J), once multi-revolution legs and deep-space manoeuvres exist.
 - [x] **Travel time as a mission parameter.** Science, cargo and crewed missions, picked from the block hash, each with its own value of time (250, 50 and 3,000 m/s per year) and flight-time limit; launch, flyby and arrival dates in calendar terms.
   - [x] Per-mission `time_penalty` and `max_tof` chosen from the block hash.
@@ -46,6 +48,14 @@ Today: planets on circular, flat orbits; Lambert transfers between planets; patc
 - [ ] **Launch vehicle and mass.** Convert Δv into propellant mass with the rocket equation, add launcher limits on departure energy (C3) and declination, and score payload delivered.
 - [ ] **Space-survival missions.** Add mission types beyond the outer planets: crewed Mars round trips (abort and return windows), asteroid and comet rendezvous (resources, planetary defence), and Moon–Mars logistics.
 - [ ] **Deterministic maths for consensus.** Costs are currently checked within 1 m/s, so tiny floating-point differences between computers can't split the chain. Before running a public network, switch to a portable, correctly rounded maths library (or fixed-point arithmetic) so every node computes the identical number.
+
+## Nebulite × Pulsarite: interstellar departures
+
+- [x] **Escape missions** (about 1 Nebulite block in 5): leave the solar system aimed exactly at a Pulsarite star, scored by years to 550 AU; flybys, optional Sun dives, realistic launch and fuel limits; always solvable.
+- [ ] **Hand-off to Pulsarite:** start Pulsarite routes from a mined Nebulite departure (the probe's real position and speed at 550 AU), instead of from rest at the Sun.
+- [ ] **Interstellar-object intercepts:** missions to catch objects passing through from other stars (like 'Oumuamua), with short-notice launch windows.
+- [ ] **Precursor targets:** the heliopause (about 120 AU) and the Sun's gravitational lens focal line toward a target star, as mission goals of their own.
+- [ ] **Powered Jupiter flybys:** a burn at Jupiter closest approach (the "Jupiter Oberth" option the Interstellar Probe study preferred).
 
 ## Both coins
 
@@ -81,3 +91,5 @@ Today: planets on circular, flat orbits; Lambert transfers between planets; patc
 - [x] Pulsarite: acceleration, braking and survey stops; usernames claimable without mining
 - [x] Pulsarite: per-leg cruise speeds, fuel budget and survey time
 - [x] Pulsarite: planet-weighted survey stops; Nebulite: mission types and dates; web map on every node
+- [x] Nebulite: full VSOP87A planet positions, accurate well past 2050
+- [x] Nebulite × Pulsarite: escape missions toward Pulsarite stars

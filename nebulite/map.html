@@ -70,6 +70,7 @@ const COL = { crimson: "#DC143C", crimsonLight: "#FF4D6A", amber: "#FBBF24", tex
 const canvas = document.getElementById("c"), ctx = canvas.getContext("2d");
 const info = document.getElementById("info"), list = document.getElementById("list");
 let data = null, kind = "", selected = 0, picks = [];
+const ESC_POINTER_AU = 25;          // length of the dashed pointer toward an escape's target star
 let yaw = 0.6, pitch = 0.5, zoom = 1;
 
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
@@ -79,7 +80,8 @@ function fmt(n, d = 0) { return Number(n).toLocaleString("en-US", { minimumFract
 // Mercury stay readable next to Arcturus and Neptune. Directions are true.
 function squash(p) { const r = Math.hypot(p[0], p[1], p[2]); if (r < 1e-9) return [0, 0, 0]; const f = Math.sqrt(r) / r; return [p[0] * f, p[1] * f, p[2] * f]; }
 function world(p) { return squash(p); }
-function extent() { return kind === "orbits" ? Math.sqrt(31) : Math.sqrt(45); }
+let fitAu = 0;                      // an escape path's reach (AU): the view widens to show it
+function extent() { return kind === "orbits" ? Math.sqrt(Math.max(31, fitAu * 1.1)) : Math.sqrt(45); }
 
 function project(p) {
   const w = canvas.width, h = canvas.height, s = Math.min(w, h) / (2.3 * extent()) * zoom;
@@ -128,6 +130,9 @@ function draw() {
   ctx.fillStyle = "#030303"; ctx.fillRect(0, 0, canvas.width, canvas.height);
   picks = [];
   if (!data) return;
+  fitAu = 0;
+  const selM = kind === "orbits" ? data.missions[selected] : null;
+  if (selM && selM.mission_type === "escape") fitAu = Math.max(...selM.points.map(q => Math.hypot(...q))) + ESC_POINTER_AU;
   rings();
   if (kind === "stars") drawStars(); else drawOrbits();
 }
@@ -167,8 +172,18 @@ function drawOrbits() {
     dot(p, COL.text, 2.4, o.name.toUpperCase(), false,
       `<span class="k">${esc(o.name.toUpperCase())}</span>\n${fmt(Math.hypot(...p), 2)} AU from the Sun at the latest mission's launch`);
   });
+  if (sel && sel.mission_type === "escape" && sel.points.length) {
+    // the star direction: a dashed pointer from the end of the drawn path
+    const end = sel.points[sel.points.length - 1], d = sel.star_dir, L = ESC_POINTER_AU;
+    const tip = [end[0] + d[0] * L, end[1] + d[1] * L, end[2] + d[2] * L];
+    ctx.setLineDash([6, 6]); polyline([end, tip], COL.amber, 1.4, .8); ctx.setLineDash([]);
+    dot(tip, COL.amber, 3, "→ " + sel.target_star.toUpperCase(), true,
+      `<span class="k">${esc(sel.target_star.toUpperCase())}</span>\nThe escape aims straight at this Pulsarite star.\n` +
+      `${fmt(sel.au_per_year, 2)} AU per year: 550 AU in ${fmt(sel.years)} years, the star in about ${fmt(sel.years_to_star)} years.`);
+  }
   if (sel) sel.encounters.forEach((e, k) => {
-    const what = k === 0 ? "LAUNCH" : k === sel.encounters.length - 1 ? "ARRIVE" : "FLYBY";
+    const last = k === sel.encounters.length - 1;
+    const what = e.planet === "Sun" ? "SUN DIVE" : k === 0 ? "LAUNCH" : last && sel.mission_type !== "escape" ? "ARRIVE" : "FLYBY";
     dot(e.p, COL.amber, 3, `${what} ${e.planet.toUpperCase()} ${e.date.slice(0, 4)}`, true,
       `<span class="k">${what}: ${esc(e.planet.toUpperCase())}</span>\n${e.date}\nBlock ${sel.height} · ${sel.mission_type} mission`);
   });
@@ -183,6 +198,9 @@ function renderList() {
     const body = kind === "stars"
       ? `<span class="t">BLOCK ${r.height}</span>${by}<br>${fmt(r.years)} yr · ${fmt(r.length_ly)} ly · fuel ${fmt(r.fuel_used_pct)}%<br>` +
         `<span class="m">${fmt(r.improvement_pct, 1)}% faster than greedy · stops: ${esc(r.stops.join(", "))}</span>`
+      : r.mission_type === "escape"
+      ? `<span class="t">BLOCK ${r.height}</span> · escape → ${esc(r.target_star)}${by}<br>${esc(r.path.join("–"))}<br>` +
+        `<span class="m">${fmt(r.vinf_kms, 1)} km/s (${fmt(r.au_per_year, 2)} AU/yr) · 550 AU in ${fmt(r.years)} yr, ${r.arrival_date.slice(0, 4)} · ${fmt(r.improvement_pct, 1)}% faster than baseline</span>`
       : `<span class="t">BLOCK ${r.height}</span> · ${esc(r.mission_type)}${by}<br>${esc(r.path.join("–"))}<br>` +
         `<span class="m">${fmt(r.dv_kms, 2)} km/s · ${fmt(r.years, 1)} yr · arrives ${r.arrival_date} · ${fmt(r.improvement_pct, 1)}% cheaper than direct</span>`;
     return `<button class="row${i === selected ? " on" : ""}" data-i="${i}">${body}</button>`;
@@ -196,6 +214,11 @@ function showSelected() {
   info.innerHTML = kind === "stars"
     ? `<span class="k">BLOCK ${r.height} ROUTE</span>\n${r.route.length} stars in ${fmt(r.years)} years (greedy: ${fmt(r.baseline_years)})\n` +
       `${fmt(r.length_ly)} ly flown · fuel ${fmt(r.fuel_used_pct)}% · mass ratio ${fmt(r.mass_ratio, 1)}\nSurvey stops: ${esc(r.stops.join(", "))}`
+    : r.mission_type === "escape"
+    ? `<span class="k">BLOCK ${r.height} · ESCAPE TOWARD ${esc(r.target_star.toUpperCase())}</span>\n${esc(r.path.join(" → "))}\n` +
+      `Launch ${r.launch_date} at ${fmt(r.launch_kms, 1)} km/s · ${fmt(r.burns_kms, 2)} km/s of burns\n` +
+      `Leaves the solar system at ${fmt(r.vinf_kms, 1)} km/s (${fmt(r.au_per_year, 2)} AU/yr)\n` +
+      `Passes 550 AU in ${r.arrival_date.slice(0, 4)} (${fmt(r.years)} years); Pulsarite takes it from there`
     : `<span class="k">BLOCK ${r.height} · ${esc(r.mission_type.toUpperCase())} MISSION</span>\n${esc(r.path.join(" → "))}\n` +
       `Launch ${r.launch_date} · arrive ${r.arrival_date}\n${fmt(r.dv_kms, 2)} km/s over ${fmt(r.years, 1)} years`;
 }

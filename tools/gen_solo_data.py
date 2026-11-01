@@ -10,7 +10,9 @@ It rewrites android/app/src/main/java/com/example/stellariteminer/SoloData.kt.
 """
 import importlib
 import json
+import math
 import os
+import shutil
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -50,6 +52,29 @@ def consts(C, extra):
         bonusExponent = {extra},"""
 
 
+OBLIQUITY_J2000_DEG = 84381.406 / 3600            # IAU 2006 mean obliquity of the ecliptic at J2000
+
+
+def write_star_targets(PC, stars):
+    """nebulite/star_targets.json: each Pulsarite star's direction from the Sun in Nebulite's
+    frame (ecliptic J2000), where the star will be when Pulsarite's probe launches."""
+    eps = math.radians(OBLIQUITY_J2000_DEG)
+    out = []
+    for s in stars.CATALOG:
+        x, y, z = stars.pos(s["id"], stars.LAUNCH_T)        # equatorial, milli-light-years
+        ye, ze = math.cos(eps) * y + math.sin(eps) * z, -math.sin(eps) * y + math.cos(eps) * z
+        r = math.sqrt(x * x + ye * ye + ze * ze)
+        out.append({"id": s["id"], "name": s["name"], "planets": s["planets"], "distance_ly": round(r / 1000, 3),
+                    "dir": [round(x / r, 12), round(ye / r, 12), round(ze / r, 12)]})
+    data = {"source": "Pulsarite star catalog (node/stars.py)", "catalog_id": stars.CATALOG_ID,
+            "frame": "ecliptic J2000, unit vectors", "launch_year": PC.LAUNCH_YEAR, "stars": out}
+    path = os.path.join(ROOT, "nebulite/star_targets.json")
+    with open(path, "w") as f:
+        json.dump(data, f, indent=1)
+        f.write("\n")
+    print("wrote", os.path.relpath(path, ROOT))
+
+
 def main():
     PC, stars = load("node", "config", "stars")
     if stars.CATALOG_SOURCE != "built-in":
@@ -64,14 +89,23 @@ def main():
     planets = ", ".join(str(s["planets"]) for s in stars.CATALOG)
     pul = consts(PC, PC.ROUTE_BONUS_EXPONENT)
 
+    write_star_targets(PC, stars)                 # trajectory.py reads this file when it loads
     NC, T = load("nebulite", "config", "trajectory")
-    neb = consts(NC, NC.TRAJECTORY_BONUS_EXPONENT)
+    neb = consts(NC, NC.TRAJECTORY_BONUS_EXPONENT) + (
+        f"\n        bonusCapNum = {NC.BONUS_RATIO_CAP_NUM}L,\n        bonusCapDen = {NC.BONUS_RATIO_CAP_DEN}L,")
     model_json = json.dumps({"planets": T.planets_json(), "physics": T.physics_json()}, sort_keys=True)
     mission = json.dumps({
         "targets": T.TARGETS, "max_tof_years": {str(k): v for k, v in T.MAX_TOF_YEARS.items()},
         "max_flybys": T.MAX_FLYBYS, "window_days": T.WINDOW_DAYS,
         "window_start_min": T.WINDOW_START_MIN, "window_start_spread": T.WINDOW_START_SPREAD,
         "mission_types": T.MISSION_TYPES, "mission_draw": T.MISSION_DRAW,
+        "escape": {"odds": T.ESCAPE_ODDS, "goal_au": T.ESCAPE_GOAL_AU,
+                   "launch_vinf_max_kms": T.ESCAPE_LAUNCH_VINF_MAX, "burn_budget_kms": T.ESCAPE_BURN_BUDGET,
+                   "min_perihelion_au": T.ESCAPE_MIN_PERIHELION_AU, "max_cruise_days": T.ESCAPE_MAX_CRUISE_DAYS,
+                   "flyby_bodies": T.ESCAPE_FLYBY_BODIES, "star_weight_per_planet": T.STAR_WEIGHT_PER_PLANET},
+        "star_targets": [{k: st[k] for k in ("id", "name", "planets", "distance_ly", "dir")}
+                         for st in T.STAR_TARGETS["stars"]],
+        "star_catalog_id": T.STAR_TARGETS["catalog_id"],
     }, sort_keys=True)
 
     src = f'''package com.example.stellariteminer
@@ -124,6 +158,11 @@ object SoloData {{
     with open(OUT, "w") as f:
         f.write(src)
     print("wrote", os.path.relpath(OUT, ROOT))
+    # The app reads the same planetary theory the node uses (Vsop87.kt loads it as a resource).
+    res = os.path.join(ROOT, "android/app/src/main/resources/vsop87a.txt")
+    os.makedirs(os.path.dirname(res), exist_ok=True)
+    shutil.copyfile(T.VSOP87_FILE, res)
+    print("wrote", os.path.relpath(res, ROOT))
 
 
 if __name__ == "__main__":

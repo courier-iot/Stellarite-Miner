@@ -58,7 +58,25 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
             u.stops(t.prev), plan.speeds, Math.round(1000.0 * dv / f.dvBudget) / 10.0)
     }
 
+    private var escOpt: EscapeOptimizer? = null
+
     private fun trajectoryWork(u: TrajectoryRules, t: SoloChain.Template, fresh: Boolean, ms: Long): Pair<Any, UsefulWork> {
+        val mission = u.mission(t.prev)
+        if (mission.optString("type") == "escape") {
+            if (fresh || escOpt == null) {
+                trajModel = u.model(t.prev)
+                escOpt = EscapeOptimizer(Escape(trajModel!!, trajModel!!.escape!!), u.escapeBaseline(t.prev).first)
+            }
+            val m = trajModel!!
+            val opt = escOpt!!
+            opt.improve(ms)
+            val plan = opt.bestPlan ?: u.escapeBaseline(t.prev).first
+            val value = u.escapeValue(t.prev, plan)
+            val ev = Escape(m, m.escape!!).evaluate(plan)!!
+            val gain = Math.round(10000.0 * (1 - value.getLong("cost").toDouble() / value.getLong("baseline"))) / 100.0
+            return value to TrajectoryInfo(plan.seq.toList(), plan.days.toList(), m.pathName(plan.seq),
+                ev.launchKms + ev.burnsKms, ev.years, gain, "escape", plan.escapeJson(), m.escape!!.starName, ev.vinfKms)
+        }
         if (fresh || trajOpt == null) {
             trajModel = u.model(t.prev)
             trajOpt = TrajectoryOptimizer(trajModel!!)
@@ -141,6 +159,22 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
                 val seqA = tr.getJSONArray("seq"); val daysA = tr.getJSONArray("days")
                 val seq = IntArray(seqA.length()) { seqA.getInt(it) }; val days = IntArray(daysA.length()) { daysA.getInt(it) }
                 val m = u.model(b.getString("prev_hash"))
+                val gain = Math.round(10000.0 * (1 - tr.getLong("cost").toDouble() / tr.getLong("baseline"))) / 100.0
+                val em = m.escape
+                if (em != null) {
+                    val plan = EscapePlan.fromJson(seq, days, tr.getJSONObject("escape"))
+                    val ev = Escape(m, em).evaluate(plan) ?: continue
+                    out.put(JSONObject().put("height", b.getLong("height")).put("mission_type", "escape")
+                        .put("target_star", em.starName).put("target_star_id", em.starId)
+                        .put("star_dir", JSONArray(em.dir.toList()))
+                        .put("path", JSONArray(seq.map { if (it == TrajectoryModel.SUN) "Sun" else m.planets[it].name } + "550 AU"))
+                        .put("seq", JSONArray(seq.toList())).put("days", JSONArray(days.toList()))
+                        .put("escape", tr.getJSONObject("escape"))
+                        .put("dv_kms", ev.launchKms + ev.burnsKms).put("vinf_kms", ev.vinfKms).put("au_per_year", ev.auPerYear)
+                        .put("years", ev.years).put("launch_date", TrajectoryModel.dateOf(days.first()))
+                        .put("arrival_date", TrajectoryModel.dateOf(days.first() + ev.cost)).put("improvement_pct", gain))
+                    continue
+                }
                 val ev = m.evaluate(seq, days) ?: continue
                 out.put(JSONObject().put("height", b.getLong("height"))
                     .put("path", JSONArray(seq.map { m.planets[it].name })).put("seq", JSONArray(seq.toList()))

@@ -96,6 +96,8 @@ def info():
             "units_per_coin": C.UNITS_PER_COIN,
             "name_pow_bits": C.NAME_POW_BITS,
             "useful_work": "spacecraft trajectories",
+            "ephemeris": T.EPHEMERIS, "ephemeris_id": T.EPHEMERIS_ID,
+            "star_catalog_id": T.STAR_TARGETS["catalog_id"],   # must equal the Pulsarite node's catalog_id
         })
 
 
@@ -242,8 +244,9 @@ def mining_work():
         "job_id": job_id,
         "height": template["height"],
         "mission": prob,
-        "mission_about": T.MISSION_TYPES[prob["type"]]["about"],
-        "baseline": {"seq": base["seq"], "days": base["days"], "cost": round(base["cost"])},
+        "mission_about": T.ESCAPE_ABOUT if prob["type"] == "escape" else T.MISSION_TYPES[prob["type"]]["about"],
+        "baseline": {"seq": base["seq"], "days": base["days"], "cost": round(base["cost"]),
+                     **({"escape": base["escape"]} if prob["type"] == "escape" else {})},
         "planets": T.planets_json(),
         "physics": T.physics_json(),
         "base_target": template["target"],
@@ -253,12 +256,14 @@ def mining_work():
     })
 
 
-def _job_block(job_id, seq, days):
+def _job_block(job_id, seq, days, escape=None):
     template = jobs.get(job_id)
     if template is None:
         raise LookupError("unknown or expired job")
-    sc = score_trajectory(template["prev_hash"], seq, days)
+    sc = score_trajectory(template["prev_hash"], seq, days, escape)
     tr = {"seq": list(seq), "days": list(days), "cost": sc["cost"], "baseline": sc["baseline"]}
+    if escape is not None:
+        tr["escape"] = dict(escape)
     return template, dict(template, trajectory=tr), sc
 
 
@@ -267,13 +272,25 @@ def mining_trajectory():
     body = request.get_json(silent=True) or {}
     with lock:
         try:
-            _, block, sc = _job_block(body.get("job_id"), body.get("seq"), body.get("days"))
+            _, block, sc = _job_block(body.get("job_id"), body.get("seq"), body.get("days"), body.get("escape"))
         except LookupError as e:
             return err(str(e), 410)
         except ValidationError as e:
             return err(str(e))
     ev = sc["eval"]
     target = effective_target(block["target"], sc["cost"], sc["baseline"])
+    if "vinf_kms" in ev:                         # escape mission
+        days = body.get("days")
+        return jsonify({
+            "prefix": header_prefix(block).hex(), "target": format(target, "064x"),
+            "cost": sc["cost"], "baseline": sc["baseline"],
+            "improvement_pct": round(100 * (1 - sc["cost"] / sc["baseline"]), 2),
+            "dv_kms": round(ev["launch_kms"] + ev["burns_total_kms"], 3), "years": round(ev["years"], 2),
+            "launch_kms": round(ev["launch_kms"], 3), "burns_kms": round(ev["burns_total_kms"], 3),
+            "vinf_kms": round(ev["vinf_kms"], 3), "au_per_year": round(ev["au_per_year"], 3),
+            "years_to_star": round(ev["years_to_star"]),
+            "launch_date": T.date_of(days[0]), "arrival_date": T.date_of(days[0] + ev["cost"]),
+        })
     return jsonify({
         "prefix": header_prefix(block).hex(),
         "target": format(target, "064x"),
@@ -291,7 +308,7 @@ def mining_submit():
     body = request.get_json(silent=True) or {}
     with lock:
         try:
-            template, block, _ = _job_block(body.get("job_id"), body.get("seq"), body.get("days"))
+            template, block, _ = _job_block(body.get("job_id"), body.get("seq"), body.get("days"), body.get("escape"))
         except LookupError as e:
             return err(str(e), 410)
         except ValidationError as e:
@@ -340,7 +357,17 @@ def map_data():
         if key not in _map_cache:
             rows = chain.mission_stats(limit)
             ref = rows[0]["days"][0] if rows else T.WINDOW_START_MIN
+            blocks = {b["height"]: b for b in chain.blocks[-limit - 1:]}
             for r in rows:
+                if r["mission_type"] == "escape":
+                    prob = T.problem(blocks[r["height"]]["prev_hash"])
+                    r["points"] = T.escape_path(prob, r["seq"], r["days"], r["escape"])
+                    r["star_dir"] = prob["target_star"]["dir"]
+                    for enc, p, d in zip(r["encounters"], r["seq"], r["days"]):
+                        enc["p"] = list(T.planet_state(p, d)[0])
+                    if r["encounters"][-1]["planet"] == "Sun":     # perihelion point: the path's closest approach
+                        r["encounters"][-1]["p"] = min(r["points"], key=lambda q: q[0] ** 2 + q[1] ** 2 + q[2] ** 2)
+                    continue
                 r["points"] = T.sample_path(r["seq"], r["days"])
                 for enc, p, d in zip(r["encounters"], r["seq"], r["days"]):
                     enc["p"] = list(T.planet_state(p, d)[0])

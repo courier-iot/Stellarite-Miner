@@ -21,6 +21,9 @@ data class CoinRules(
     val genesisTimestamp: Long,
     val genesisMessage: String,
     val bonusExponent: Int,
+    /** Only the first NUM/DEN of improvement counts (0 = no cap); Nebulite: 8/5 (chain.effective_target). */
+    val bonusCapNum: Long = 0,
+    val bonusCapDen: Long = 1,
 )
 
 /** A block's useful work: problem, scoring and how it appears in the header. */
@@ -128,8 +131,11 @@ class SoloChain(private val file: File, val rules: CoinRules, val useful: Useful
 
     fun effectiveTarget(baseTarget: String, score: Long, baseline: Long): BigInteger {
         val k = rules.bonusExponent
+        var cost = score
+        if (rules.bonusCapNum > 0)      // ceil(baseline * DEN / NUM), as -(-baseline * DEN // NUM) in Python
+            cost = maxOf(cost, Math.floorDiv(baseline * rules.bonusCapDen + rules.bonusCapNum - 1, rules.bonusCapNum))
         val t = BigInteger(baseTarget, 16).multiply(BigInteger.valueOf(baseline).pow(k))
-            .divide(BigInteger.valueOf(maxOf(score, 1)).pow(k))
+            .divide(BigInteger.valueOf(maxOf(cost, 1)).pow(k))
         return t.min(MAX_TARGET).max(BigInteger.ONE)
     }
 
@@ -139,10 +145,26 @@ class SoloChain(private val file: File, val rules: CoinRules, val useful: Useful
     class Template(val height: Long, val prev: String, val timestamp: Long, val target: String,
                    val coinbase: String, val txRoot: String, val reward: Long)
 
-    /** [name] (A-Z, 0-9, _; 3-16 chars) is claimed in the coinbase, as on a node. */
+    /** Who owns each username on this chain, replaying the coinbase claims as a node does
+     *  (claiming a new name releases the address's old one). */
+    @Synchronized fun nameOwners(): Map<String, String> {
+        val owner = HashMap<String, String>(); val nameOf = HashMap<String, String>()
+        for (b in blocks.drop(1)) {
+            val cb = b.getJSONArray("txs").getJSONObject(0)
+            val nm = cb.optString("name", ""); val to = cb.getString("to")
+            if (nm.isEmpty() || (owner[nm] != null && owner[nm] != to)) continue
+            nameOf[to]?.let { if (it != nm) owner.remove(it) }
+            owner[nm] = to; nameOf[to] = nm
+        }
+        return owner
+    }
+
+    /** [name] (A-Z, 0-9, _; 3-16 chars) is claimed in the coinbase, as on a node. If another address
+     *  already owns it on this chain, the block is mined without a claim (a node would refuse it). */
     @Synchronized fun template(miner: String, name: String = "", now: Long = System.currentTimeMillis() / 1000): Template {
         val h = height + 1
-        val n = if (Regex("^[A-Z0-9_]{3,16}$").matches(name)) name else ""
+        var n = if (Regex("^[A-Z0-9_]{3,16}$").matches(name)) name else ""
+        if (n.isNotEmpty() && nameOwners()[n].let { it != null && it != miner }) n = ""
         val cb = coinbaseJson(h, miner, reward(h), n)
         return Template(h, tip.getString("hash"), maxOf(now, medianTimePast() + 1), nextTarget(), cb,
             txRoot(listOf(cb)), reward(h))
@@ -292,21 +314,46 @@ class TrajectoryRules : UsefulRules {
         if (value == JSONObject.NULL) return ""
         val o = value as JSONObject
         val seq = o.getJSONArray("seq"); val days = o.getJSONArray("days")
+        val esc = o.optJSONObject("escape")
+        val extra = if (esc == null) "" else
+            "#" + esc.keys().asSequence().sorted().joinToString(",") { "$it=${esc.getInt(it)}" }
         return (0 until seq.length()).joinToString(",") { seq.getInt(it).toString() } + "@" +
-            (0 until days.length()).joinToString(",") { days.getInt(it).toString() } +
+            (0 until days.length()).joinToString(",") { days.getInt(it).toString() } + extra +
             "$" + o.getLong("cost") + "$" + o.getLong("baseline")
     }
 
     private val rulesJson = JSONObject(SoloData.NEBULITE_MISSION_RULES_JSON)
     private val baselineCache = LinkedHashMap<String, Pair<Double, Pair<IntArray, IntArray>>>()
 
-    /** This block's mission (same as trajectory.problem). */
-    fun mission(prevHash: String): JSONObject {
+    private val missionCache = object : LinkedHashMap<String, String>(32, 0.75f, true) {
+        override fun removeEldestEntry(e: MutableMap.MutableEntry<String, String>?) = size > 32
+    }
+    private val escapeGridCache = HashMap<String, Pair<EscapePlan, Double>>()
+
+    /** This block's mission (same as trajectory.problem): an escape mission 1 time in 4, if one is
+     *  known to be possible for the drawn star, otherwise a planet mission. */
+    fun mission(prevHash: String): JSONObject = synchronized(missionCache) {
+        missionCache[prevHash]?.let { return JSONObject(it) }
+        val m = computeMission(prevHash)
+        missionCache[prevHash] = m.toString()
+        m
+    }
+
+    private fun computeMission(prevHash: String): JSONObject {
         val h = BigInteger(1, sha256(bytesOfHex(prevHash) + "mission".toByteArray()))
         val targets = rulesJson.getJSONArray("targets")
         val target = targets.getInt(h.mod(BigInteger.valueOf(targets.length().toLong())).toInt())
         val start = rulesJson.getInt("window_start_min") +
             h.shiftRight(8).mod(BigInteger.valueOf(rulesJson.getLong("window_start_spread"))).toInt()
+        val esc = rulesJson.getJSONObject("escape")
+        if (EscapeMission.hashInt(prevHash, "escape").mod(BigInteger.valueOf(esc.getLong("odds"))).signum() == 0) {
+            val em = EscapeMission.build(prevHash, start, rulesJson)
+            val grid = Escape(TrajectoryModel(JSONObject(SoloData.NEBULITE_MODEL_JSON).put("mission", em)), EscapeMission(em)).grid()
+            if (grid != null) {
+                synchronized(escapeGridCache) { escapeGridCache[prevHash] = grid }
+                return em
+            }
+        }
         val flyby = JSONArray().put(1).put(2).put(3)
         for (p in intArrayOf(4, 5)) if (p < target) flyby.put(p)
         val years = rulesJson.getJSONObject("max_tof_years").getInt(target.toString())
@@ -349,6 +396,29 @@ class TrajectoryRules : UsefulRules {
         baselineCache[prevHash] = b
         while (baselineCache.size > 16) baselineCache.remove(baselineCache.keys.first())
         b
+    }
+
+    /** The escape baseline (as trajectory.escape_baseline): the best textbook plan and its days to 550 AU. */
+    fun escapeBaseline(prevHash: String): Pair<EscapePlan, Double> {
+        synchronized(escapeGridCache) { escapeGridCache[prevHash]?.let { return it } }
+        val m = model(prevHash)
+        val g = Escape(m, m.escape ?: throw IllegalStateException("not an escape mission")).grid()!!
+        synchronized(escapeGridCache) {
+            escapeGridCache[prevHash] = g
+            while (escapeGridCache.size > 32) escapeGridCache.remove(escapeGridCache.keys.first())
+        }
+        return g
+    }
+
+    /** Builds an escape block's trajectory value (with claimed costs). */
+    fun escapeValue(prevHash: String, plan: EscapePlan): JSONObject {
+        val m = model(prevHash)
+        val e = Escape(m, m.escape ?: throw IllegalArgumentException("this block's mission isn't an escape mission"))
+        require(e.allowed(plan)) { "escape trajectory breaks the mission rules" }
+        val ev = e.evaluate(plan) ?: throw IllegalArgumentException("escape trajectory is not possible within the limits")
+        return JSONObject().put("seq", JSONArray(plan.seq.toList())).put("days", JSONArray(plan.days.toList()))
+            .put("cost", Math.rint(ev.cost).toLong()).put("baseline", Math.rint(escapeBaseline(prevHash).second).toLong())
+            .put("escape", plan.escapeJson())
     }
 
     /** Builds the block's trajectory value (with claimed costs) for a planned mission. */

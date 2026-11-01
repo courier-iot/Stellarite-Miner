@@ -22,6 +22,7 @@ class NebuliteClient(baseUrl: String, private val address: String, private val n
     private var missionKey = ""
     private var model: TrajectoryModel? = null
     private var optimizer: TrajectoryOptimizer? = null
+    private var escOpt: EscapeOptimizer? = null
 
     fun info(): JSONObject = http.info()
 
@@ -32,6 +33,7 @@ class NebuliteClient(baseUrl: String, private val address: String, private val n
 
         // 1. Useful work: plan this block's mission.
         val key = work.getJSONObject("mission").toString()
+        if (work.getJSONObject("mission").optString("type") == "escape") return escapeWork(work, jobId, key)
         val fresh = key != missionKey || optimizer == null
         if (fresh) {
             val m = TrajectoryModel(work)
@@ -67,10 +69,41 @@ class NebuliteClient(baseUrl: String, private val address: String, private val n
         )
     }
 
+    /** An escape block: leave the solar system toward a Pulsarite star (Escape.kt). */
+    private fun escapeWork(work: JSONObject, jobId: String, key: String): Job {
+        val fresh = key != missionKey || escOpt == null
+        val b = work.getJSONObject("baseline")
+        val start = EscapePlan.fromJson(IntArray(b.getJSONArray("seq").length()) { b.getJSONArray("seq").getInt(it) },
+            IntArray(b.getJSONArray("days").length()) { b.getJSONArray("days").getInt(it) }, b.getJSONObject("escape"))
+        if (fresh) {
+            val m = TrajectoryModel(work)
+            model = m
+            escOpt = EscapeOptimizer(Escape(m, m.escape!!), start)
+            missionKey = key
+        }
+        val opt = escOpt!!
+        opt.improve(if (fresh) FIRST_PLAN_MS else REFINE_PLAN_MS)
+        val plan = opt.bestPlan ?: start
+        val (rc, scored) = http.request("POST", "/mining/trajectory", JSONObject()
+            .put("job_id", jobId).put("seq", JSONArray(plan.seq.toList())).put("days", JSONArray(plan.days.toList()))
+            .put("escape", plan.escapeJson()))
+        if (rc != 200) throw IOException(scored.optString("error", "HTTP $rc"))
+        return Job(
+            id = jobId, height = work.getLong("height"),
+            prefix = NodeClient.hexToBytes(scored.getString("prefix")), target = NodeClient.hexToBytes(scored.getString("target")),
+            nonceSize = 8, littleEndian = false,
+            rewardUnits = work.getLong("reward"), unitsPerCoin = work.getLong("units_per_coin"),
+            work = TrajectoryInfo(plan.seq.toList(), plan.days.toList(), model!!.pathName(plan.seq),
+                scored.getDouble("dv_kms"), scored.getDouble("years"), scored.getDouble("improvement_pct"),
+                "escape", plan.escapeJson(), model!!.escape!!.starName, scored.getDouble("vinf_kms")),
+        )
+    }
+
     override fun submit(job: Job, nonce: Long): SubmitResult {
         val t = job.work as TrajectoryInfo
         val payload = JSONObject().put("job_id", job.id).put("seq", JSONArray(t.seq))
             .put("days", JSONArray(t.days)).put("nonce", nonce)
+        if (t.escape != null) payload.put("escape", t.escape)
         val (code, body) = http.request("POST", "/mining/submit", payload)
         return if (code == 200 && body.optBoolean("ok")) {
             SubmitResult(true, "Block ${body.optLong("height")} accepted")

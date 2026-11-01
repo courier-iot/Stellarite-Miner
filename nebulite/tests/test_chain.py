@@ -1,4 +1,5 @@
 """Run from the node/ folder:  python -m unittest discover tests"""
+import math
 import os
 import sys
 import tempfile
@@ -12,18 +13,21 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import config as C  # noqa: E402
 import chain as ch  # noqa: E402
 import trajectory as T  # noqa: E402
-from traj_opt import optimise  # noqa: E402
+from traj_opt import optimise, plan  # noqa: E402
 from crypto_utils import (address_from_pubkey, is_valid_address, new_private_key,  # noqa: E402
                           public_key_hex, sign)
 
 
-def trajectory_for(prev_hash, seq=None, days=None):
-    """A block trajectory with claimed costs; the direct baseline unless one is given."""
+def trajectory_for(prev_hash, seq=None, days=None, escape=None):
+    """A block trajectory with claimed costs; the baseline unless one is given."""
     if seq is None:
         b = T.baseline(prev_hash)
-        seq, days = b["seq"], b["days"]
-    sc = ch.score_trajectory(prev_hash, seq, days)
-    return {"seq": seq, "days": days, "cost": sc["cost"], "baseline": sc["baseline"]}
+        seq, days, escape = b["seq"], b["days"], b.get("escape")
+    sc = ch.score_trajectory(prev_hash, seq, days, escape)
+    tr = {"seq": seq, "days": days, "cost": sc["cost"], "baseline": sc["baseline"]}
+    if escape is not None:
+        tr["escape"] = escape
+    return tr
 
 
 def mine(template, trajectory=None):
@@ -214,12 +218,15 @@ class ChainTests(unittest.TestCase):
             h = hashlib.sha256(str(k).encode()).hexdigest()
             p = T.problem(h)
             seen.setdefault(p["type"], p)
+            if p["type"] == "escape":
+                continue
+            planet_hash = h
             mt = T.MISSION_TYPES[p["type"]]
             self.assertEqual(p["time_penalty_mps_per_year"], mt["time_penalty_mps_per_year"])
             self.assertEqual(p["max_tof_days"], int(T.MAX_TOF_YEARS[p["target"]] * 365.25 * mt["tof_share"]))
-        self.assertEqual(set(seen), {"science", "cargo", "crewed"})
+        self.assertEqual(set(seen), {"science", "cargo", "crewed", "escape"})
         # the same trajectory costs more when time is dear
-        b0 = T.baseline(h)                                # any real trajectory will do
+        b0 = T.baseline(planet_hash)                      # any real trajectory will do
         seq, days = b0["seq"], b0["days"]
         costs = {k: T.evaluate(seq, days, v["time_penalty_mps_per_year"])["cost"] for k, v in T.MISSION_TYPES.items()}
         self.assertLess(costs["cargo"], costs["science"])
@@ -229,6 +236,96 @@ class ChainTests(unittest.TestCase):
                       if T.problem(h)["type"] == "crewed")
         b = T.baseline(crewed)
         self.assertLessEqual(b["days"][1] - b["days"][0], T.problem(crewed)["max_tof_days"])
+
+    @staticmethod
+    def asymptote(r, v):
+        """Outbound asymptote direction of the heliocentric hyperbola through state (r, v)."""
+        import numpy as np
+        r, v = np.array(r), np.array(v)
+        mu = T.MU_SUN
+        h = np.cross(r, v)
+        evec = np.cross(v, h) / mu - r / np.linalg.norm(r)
+        e = np.linalg.norm(evec)
+        nu_inf = math.acos(-1 / e)
+        p_hat, q_hat = evec / e, np.cross(h / np.linalg.norm(h), evec / e)
+        return math.cos(nu_inf) * p_hat + math.sin(nu_inf) * q_hat
+
+    def test_escape_aims_exactly_at_the_star(self):
+        import numpy as np
+        for name in ("Alpha Centauri", "TRAPPIST-1", "Vega", "Barnard's Star"):
+            s_hat = tuple(next(x for x in T.STAR_TARGETS["stars"] if x["name"] == name)["dir"])
+            r = T.planet_state(4, 11000)[0]                         # from Jupiter
+            for long_way in (False, True):
+                out = T.escape_from_point(r, s_hat, 25 / T.AU_PER_DAY_TO_KMS, long_way)
+                if out:
+                    self.assertLess(np.linalg.norm(self.asymptote(r, out[0]) - s_hat), 1e-9)
+                    self.assertAlmostEqual(math.sqrt(out[0][0] ** 2 + out[0][1] ** 2 + out[0][2] ** 2) ** 2
+                                           - 2 * T.MU_SUN / math.dist(r, (0, 0, 0)),
+                                           (25 / T.AU_PER_DAY_TO_KMS) ** 2, delta=1e-12)   # energy -> v_inf
+                dive = T.sun_dive(r, s_hat, 30 / T.AU_PER_DAY_TO_KMS, 0.05, long_way)
+                if dive:
+                    v_need, fall, burn, to_goal = dive
+                    self.assertGreater(fall, 0)
+                    # the infall orbit reaches exactly 0.05 AU (its perihelion)
+                    hv = np.cross(r, v_need)
+                    evec = np.cross(v_need, hv) / T.MU_SUN - np.array(r) / math.dist(r, (0, 0, 0))
+                    q = (hv @ hv / T.MU_SUN) / (1 + np.linalg.norm(evec))
+                    self.assertAlmostEqual(q, 0.05, delta=1e-10)
+
+    def test_escape_time_to_550_au(self):
+        """The hyperbola timing agrees with a direct numerical integration of the orbit."""
+        s_hat = tuple(next(x for x in T.STAR_TARGETS["stars"] if x["name"] == "TRAPPIST-1")["dir"])
+        r = T.planet_state(4, 11000)[0]
+        v, days = T.escape_from_point(r, s_hat, 25 / T.AU_PER_DAY_TO_KMS)
+        st, t, h = list(r) + list(v), 0.0, 1.0
+
+        def acc(x):
+            d = math.dist(x[:3], (0, 0, 0)) ** 3
+            return [x[3], x[4], x[5]] + [-T.MU_SUN * x[k] / d for k in range(3)]
+        while math.dist(st[:3], (0, 0, 0)) < T.ESCAPE_GOAL_AU:
+            k1 = acc(st); k2 = acc([a + h / 2 * b for a, b in zip(st, k1)])
+            k3 = acc([a + h / 2 * b for a, b in zip(st, k2)]); k4 = acc([a + h * b for a, b in zip(st, k3)])
+            st = [a + h / 6 * (b + 2 * c + 2 * d + e) for a, b, c, d, e in zip(st, k1, k2, k3, k4)]
+            t += h
+            h = min(20.0, h * 1.01)
+        self.assertAlmostEqual(t, days, delta=21)                    # within one integration step
+
+    def test_escape_blocks_are_always_solvable(self):
+        import hashlib
+        n = 0
+        for k in range(160):
+            h = hashlib.sha256(f"esc{k}".encode()).hexdigest()
+            p = T.problem(h)
+            if p["type"] != "escape":
+                continue
+            n += 1
+            b = T.baseline(h)
+            sc = ch.score_trajectory(h, b["seq"], b["days"], b["escape"])      # the baseline itself is valid
+            self.assertEqual(sc["cost"], round(b["cost"]))
+            star = next(x for x in T.STAR_TARGETS["stars"] if x["id"] == p["target_star"]["id"])
+            self.assertEqual(p["target_star"]["dir"], star["dir"])
+        self.assertGreater(n, 20)                                         # about 1 block in 5
+
+    def test_escape_rules(self):
+        import hashlib
+        h = next(x for x in (hashlib.sha256(f"esc{k}".encode()).hexdigest() for k in range(100))
+                 if T.problem(x)["type"] == "escape")
+        b = T.baseline(h)
+        with self.assertRaises(ch.ValidationError):                       # escape needs its parameters
+            ch.score_trajectory(h, b["seq"], b["days"])
+        too_fast = dict(b["escape"], vinf_ms=b["escape"]["vinf_ms"] + 20_000)
+        with self.assertRaises(ch.ValidationError):                       # beyond the fuel budget
+            ch.score_trajectory(h, b["seq"], b["days"], too_fast)
+        with self.assertRaises(ch.ValidationError):                       # a Sun dive straight from launch
+            ch.score_trajectory(h, [T.EARTH, T.SUN], b["days"][:1], {"vinf_ms": 5000, "rp_mau": 50})
+        tr = trajectory_for(h)
+        self.assertIn("escape", tr)
+        self.assertIn("#vinf_ms=", ch.trajectory_text(tr))               # escape choices are bound into the hash
+
+    def test_bonus_is_capped(self):
+        base = "00" + "f" * 62
+        capped = ch.effective_target(base, 1000, 1600)                    # 1.6x better: the most that counts
+        self.assertEqual(ch.effective_target(base, 100, 1600), capped)   # 16x better earns no more
 
     def test_calendar_dates(self):
         self.assertEqual(T.date_of(0), "2000-01-01")
@@ -335,15 +432,16 @@ class ApiTests(unittest.TestCase):
     def mine_via_api(self, addr, plan_seconds=0.5, name=None):
         q = f"&name={name}" if name else ""
         work = self.client.get(f"/mining/work?address={addr}{q}").get_json()
-        seq, days, _ = optimise(work["mission"], seconds=plan_seconds, max_flybys=1, seed=1)
+        p = plan(work["mission"], seconds=plan_seconds, max_flybys=1, seed=1, start=work["baseline"])
+        seq, days, esc = p["seq"], p["days"], p.get("escape")
         scored = self.client.post("/mining/trajectory",
-                                  json={"job_id": work["job_id"], "seq": seq, "days": days}).get_json()
+                                  json={"job_id": work["job_id"], "seq": seq, "days": days, "escape": esc}).get_json()
         prefix, target = bytes.fromhex(scored["prefix"]), int(scored["target"], 16)
         nonce = 0
         while int.from_bytes(ch.pow_hash(prefix, nonce), "big") > target:
             nonce += 1
         return self.client.post("/mining/submit",
-                                json={"job_id": work["job_id"], "seq": seq, "days": days, "nonce": nonce})
+                                json={"job_id": work["job_id"], "seq": seq, "days": days, "escape": esc, "nonce": nonce})
 
     def test_full_flow(self):
         r = self.mine_via_api(self.alice.addr)
@@ -435,24 +533,51 @@ class EphemerisTests(unittest.TestCase):
         import datetime as dt
         return (dt.datetime(y, m, d) - dt.datetime(2000, 1, 1, 12)).total_seconds() / 86400
 
-    def test_oppositions_within_two_days(self):
+    def test_oppositions_to_the_hour(self):
+        """Published opposition times (UT) for Mars, Jupiter and Saturn: VSOP87 lands within an hour.
+        (The few minutes left are light-time and the J2000 vs of-date frame.)"""
         import math
+        from datetime import datetime
 
         def gap(p, d):
-            lon = lambda q: math.degrees(math.atan2(T.planet_state(q, d)[0][1], T.planet_state(q, d)[0][0]))
-            return abs((lon(p) - lon(2) + 180) % 360 - 180)
-        for p, date in [(3, (2018, 7, 27)), (3, (2022, 12, 8)), (4, (2023, 11, 3)),
-                        (5, (2023, 8, 27)), (6, (2023, 11, 13)), (7, (2023, 9, 19))]:
+            lon = lambda q: math.atan2(T.planet_state(q, d)[0][1], T.planet_state(q, d)[0][0])
+            return (lon(p) - lon(2) + math.pi) % (2 * math.pi) - math.pi
+
+        def hours(y, m, d, h, mi):
+            return (datetime(y, m, d, h, mi) - datetime(2000, 1, 1, 12)).total_seconds() / 86400
+        for p, when in [(3, (2018, 7, 27, 5, 7)), (3, (2022, 12, 8, 5, 41)), (4, (2023, 11, 3, 5, 3)),
+                        (5, (2023, 8, 27, 8, 28))]:
+            d0 = hours(*when)
+            lo, hi = d0 - 3, d0 + 3                       # bisection on the longitude gap
+            for _ in range(50):
+                mid = (lo + hi) / 2
+                lo, hi = (mid, hi) if (gap(p, lo) < 0) == (gap(p, mid) < 0) else (lo, mid)
+            self.assertLess(abs(lo - d0) * 24, 1.0, f"planet {p} opposition {when}")
+        for p, date in [(6, (2023, 11, 13)), (7, (2023, 9, 19))]:   # Uranus, Neptune: right day
             d0 = self.day(*date)
-            off = min(range(-40, 41), key=lambda k: gap(p, d0 + k / 4)) / 4
-            self.assertLessEqual(abs(off), 2, f"planet {p} opposition {date}")
+            self.assertLess(min(abs(gap(p, d0 + k / 24)) for k in range(0, 24)), math.radians(0.01))
 
     def test_mars_2003_close_approach(self):
+        """2003-08-27 09:51 UT, 0.372719 AU: the closest Mars has come in 60,000 years."""
         import math
-        d0 = self.day(2003, 8, 27)
-        dist = min(math.dist(T.planet_state(3, d0 + k / 4)[0], T.planet_state(2, d0 + k / 4)[0])
-                   for k in range(-8, 9))
-        self.assertAlmostEqual(dist, 0.3727, delta=0.002)
+        d0 = self.day(2003, 8, 27) + 9.85 / 24
+        dist = min(math.dist(T.planet_state(3, d0 + k / 1440)[0], T.planet_state(2, d0 + k / 1440)[0])
+                   for k in range(-30, 31))
+        self.assertAlmostEqual(dist, 0.372719, delta=0.000002)
+
+    def test_official_vsop87_vectors(self):
+        """Spot checks from the VSOP87 authors' test file (vsop87.chk), to its 10 printed decimals."""
+        cases = [(0, 2451545.0, (-0.1300934115, -0.4472876716, -0.0245983802)),
+                 (0, 2415020.0, (-0.3897246931, -0.1502242199, 0.0236199373)),
+                 (2, 2451545.0, (-0.1771354586, 0.9672416237, -3.9e-06)),
+                 (4, 2378495.0, (-0.0180390004, 5.1317748839, -0.020044849)),
+                 (5, 2415020.0, (-0.369597375, -10.0582398188, 0.1916854382)),
+                 (7, 2451545.0, (16.8121116576, -24.9916630908, 0.1272190171)),
+                 (7, 2268920.0, (11.1160686193, -28.0548309589, 0.3216732257))]
+        for pid, jd, ref in cases:
+            p, _ = T.planet_state(pid, jd - 2451545.0)
+            for a, b in zip(p, ref):
+                self.assertAlmostEqual(a, b, delta=1e-10)
 
     def test_voyager_flybys_were_nearly_free(self):
         for seq, dates in [([2, 4, 5], [(1977, 9, 5), (1979, 3, 5), (1980, 11, 12)]),

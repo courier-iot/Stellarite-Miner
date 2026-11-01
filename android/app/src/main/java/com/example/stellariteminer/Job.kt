@@ -53,9 +53,18 @@ data class TrajectoryInfo(
     val years: Double,
     val improvementPct: Double,
     val missionType: String = "science",
+    /** Escape missions: the departure choices ({vinf_ms[, rp_mau]}), target star and speed. */
+    val escape: org.json.JSONObject? = null,
+    val starName: String = "",
+    val vinfKms: Double = 0.0,
 ) : UsefulWork {
-    val arrivalDate get() = TrajectoryModel.dateOf(days.last())
-    override val summary get() = String.format(java.util.Locale.US,
+    /** Planet missions: arrival at the target. Escape missions: passing 550 AU. */
+    val arrivalDate get() = if (escape != null) TrajectoryModel.dateOf(days.first() + years * 365.25)
+        else TrajectoryModel.dateOf(days.last())
+    override val summary get() = if (escape != null) String.format(java.util.Locale.US,
+        "ESCAPE → %s · %s · %.1f KM/S (%.2f AU/YR) · 550 AU IN %.0f YR · %.1f%% FASTER THAN BASELINE",
+        starName.uppercase(java.util.Locale.US), path, vinfKms, vinfKms / Escape.KM_S_PER_AU_YEAR, years, improvementPct)
+    else String.format(java.util.Locale.US,
         "%s MISSION %s · %.2f KM/S · %.1f YR · ARRIVES %s · %.1f%% CHEAPER THAN DIRECT",
         missionType.uppercase(java.util.Locale.US), path, dvKms, years, arrivalDate, improvementPct)
     override val gainPct get() = improvementPct

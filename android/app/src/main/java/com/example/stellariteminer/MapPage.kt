@@ -337,17 +337,54 @@ class MapPage(
         return doubleArrayOf(p[0] * f, p[1] * f, p[2] * f)
     }
 
+    // escape missions: the departure path and a pointer toward the target star
+    private var focusStar = ""
+    private var focusStarTip: DoubleArray? = null
+    private val escRules by lazy { JSONObject(SoloData.NEBULITE_MISSION_RULES_JSON) }
+
+    private fun starDir(name: String): DoubleArray? {
+        val a = escRules.getJSONArray("star_targets")
+        for (i in 0 until a.length()) {
+            val st = a.getJSONObject(i)
+            if (st.getString("name") == name) return st.getJSONArray("dir").let { d -> DoubleArray(3) { d.getDouble(it) } }
+        }
+        return null
+    }
+
+    /** An Escape helper for drawing only: geometry, no launch or fuel limits. */
+    private fun escapeTool(m: TrajectoryModel, dir: DoubleArray): Escape {
+        val r = escRules.getJSONObject("escape")
+        return Escape(m, EscapeMission(JSONObject()
+            .put("target_star", JSONObject().put("id", 0).put("name", "").put("distance_ly", 1.0).put("dir", JSONArray(dir.toList())))
+            .put("window_start", 0).put("window_end", 0).put("max_tof_days", r.getInt("max_cruise_days"))
+            .put("flyby_bodies", r.getJSONArray("flyby_bodies")).put("max_flybys", 3).put("goal_au", r.getInt("goal_au"))
+            .put("launch_vinf_max_kms", 99.0).put("burn_budget_kms", 99.0).put("min_perihelion_au", r.getDouble("min_perihelion_au"))))
+    }
+
+    /** Escape path points (AU) plus the star pointer's far end. */
+    private fun escapeLines(m: TrajectoryModel, seq: IntArray, days: IntArray, esc: JSONObject, dir: DoubleArray): Pair<List<DoubleArray>, DoubleArray>? {
+        val pts = escapeTool(m, dir).path(EscapePlan.fromJson(seq, days, esc))
+        if (pts.isEmpty()) return null
+        val end = pts.last()
+        return pts to doubleArrayOf(end[0] + dir[0] * 60, end[1] + dir[1] * 60, end[2] + dir[2] * 60)
+    }
+
     private fun buildOrbits() {
         val m = model ?: return
         val live = MinerService.status.work as? TrajectoryInfo
         val ms = missions ?: JSONArray()
         val newest = if (ms.length() > 0) ms.getJSONObject(0) else null
+        focusStar = ""; focusStarTip = null
         if (live != null) {
-            focusSeq = live.seq.toIntArray(); focusDays = live.days.toIntArray(); focusName = "LIVE PLAN ${live.path}"
+            focusSeq = live.seq.filter { it != TrajectoryModel.SUN }.toIntArray(); focusDays = live.days.toIntArray()
+            focusName = "LIVE PLAN ${live.path}"
+            if (live.escape != null) focusStar = live.starName
         } else if (newest != null && newest.optJSONArray("seq") != null) {
             val s = newest.getJSONArray("seq"); val d = newest.getJSONArray("days")
-            focusSeq = IntArray(s.length()) { s.getInt(it) }; focusDays = IntArray(d.length()) { d.getInt(it) }
+            focusSeq = IntArray(s.length()) { s.getInt(it) }.filter { it != TrajectoryModel.SUN }.toIntArray()
+            focusDays = IntArray(d.length()) { d.getInt(it) }
             focusName = "BLOCK ${newest.getInt("height")} MISSION"
+            if (newest.optString("mission_type") == "escape") focusStar = newest.optString("target_star")
         } else { focusSeq = null; focusDays = null }
 
         val today = System.currentTimeMillis() / 86_400_000.0 - 10957.5     // days since J2000
@@ -358,13 +395,32 @@ class MapPage(
             val o = ms.getJSONObject(i)
             val seq = o.optJSONArray("seq") ?: continue
             val days = o.getJSONArray("days")
-            val path = m.samplePath(IntArray(seq.length()) { seq.getInt(it) }, IntArray(days.length()) { days.getInt(it) }, 40)
-            lines += MapLine(path.map { squash(it) }, Theme.CRIMSON, if (i == 0) 1.6f else 1f, if (i == 0) 170 else 60)
+            val sq = IntArray(seq.length()) { seq.getInt(it) }; val dy = IntArray(days.length()) { days.getInt(it) }
+            val width = if (i == 0) 1.6f else 1f; val alpha = if (i == 0) 170 else 60
+            if (o.optString("mission_type") == "escape") {
+                val dir = o.optJSONArray("star_dir")?.let { d -> DoubleArray(3) { d.getDouble(it) } } ?: starDir(o.optString("target_star"))
+                val el = if (dir != null && o.optJSONObject("escape") != null) escapeLines(m, sq, dy, o.getJSONObject("escape"), dir) else null
+                if (el != null) {
+                    lines += MapLine(el.first.map { squash(it) }, Theme.CRIMSON, width, alpha)
+                    lines += MapLine(listOf(squash(el.first.last()), squash(el.second)), Theme.CRIMSON, 1f, alpha / 2)
+                    if (live == null && i == 0) focusStarTip = el.second
+                }
+                continue
+            }
+            lines += MapLine(m.samplePath(sq, dy, 40).map { squash(it) }, Theme.CRIMSON, width, alpha)
         }
-        if (live != null) lines += MapLine(m.samplePath(focusSeq!!, focusDays!!, 60).map { squash(it) }, Theme.AMBER, 2.2f, 255)
+        if (live != null) {
+            val dir = if (live.escape != null) starDir(live.starName) else null
+            val el = if (dir != null) escapeLines(m, live.seq.toIntArray(), live.days.toIntArray(), live.escape!!, dir) else null
+            if (el != null) {
+                lines += MapLine(el.first.map { squash(it) }, Theme.AMBER, 2.2f, 255)
+                lines += MapLine(listOf(squash(el.first.last()), squash(el.second)), Theme.AMBER, 1.2f, 200)
+                focusStarTip = el.second
+            } else if (focusSeq!!.size > 1) lines += MapLine(m.samplePath(focusSeq!!, focusDays!!, 60).map { squash(it) }, Theme.AMBER, 2.2f, 255)
+        }
         staticLines = lines
         legendBase = buildString {
-            append("> REAL PLANET ORBITS (JPL ELEMENTS) · DISTANCES COMPRESSED")
+            append("> REAL PLANET ORBITS (VSOP87) · DISTANCES COMPRESSED")
             append("\n> ${ms.length()} MINED MISSIONS (CRIMSON)")
             if (newest != null) {
                 val path = newest.getJSONArray("path").let { a -> (0 until a.length()).joinToString("-") { a.getString(it).take(2).uppercase(Locale.US) } }
@@ -374,13 +430,16 @@ class MapPage(
                     newest.optString("arrival_date", TrajectoryModel.dateOf(newest.getJSONArray("days").let { it.getInt(it.length() - 1) })),
                     newest.optString("miner_name", "").let { if (it.isNotEmpty() && it != "null") " · BY $it" else "" }))
             }
-            if (live != null) append("\n> LIVE PLAN (AMBER): ${live.missionType.uppercase(Locale.US)} ${live.path} · " +
+            if (live != null) append("\n> LIVE PLAN (AMBER): " + if (live.escape != null) live.summary else
+                "${live.missionType.uppercase(Locale.US)} ${live.path} · " +
                 String.format(Locale.US, "%.2f KM/S · %.1f YR · ARRIVES %s", live.dvKms, live.years, live.arrivalDate))
             val kind = live?.missionType ?: newest?.optString("mission_type", "")
             when (kind) {
                 "crewed" -> append("\n> CREWED: EVERY YEAR AWAY COSTS AS MUCH AS 3 KM/S, AND TRIPS ARE CAPPED AT HALF LENGTH")
                 "cargo" -> append("\n> CARGO: SLOW IS FINE (50 M/S PER YEAR); FUEL IS EVERYTHING")
                 "science" -> append("\n> SCIENCE: FUEL AND TIME BOTH MATTER (250 M/S PER YEAR)")
+                "escape" -> append("\n> ESCAPE: LEAVE THE SOLAR SYSTEM AIMED AT ${focusStar.uppercase(Locale.US)}; " +
+                    "SCORED ON YEARS TO 550 AU. PULSARITE PLANS THE REST")
             }
             append(if (focusSeq != null) "\n> SLIDE TO FLY THE $focusName · TAP A PLANET FOR DETAILS"
                 else "\n> TAP A PLANET FOR DETAILS · DRAG TO ROTATE · PINCH TO ZOOM")
@@ -412,7 +471,7 @@ class MapPage(
         if (seq != null && days != null) {
             for (k in seq.indices) {
                 val p = squash(m.state(seq[k], days[k].toDouble()))
-                val what = when (k) { 0 -> "LAUNCH"; seq.size - 1 -> "ARRIVE"; else -> "FLYBY" }
+                val what = when { k == 0 -> "LAUNCH"; k == seq.size - 1 && focusStar.isEmpty() -> "ARRIVE"; else -> "FLYBY" }
                 val name = m.planets[seq[k]].name.uppercase(Locale.US)
                 points += MapPoint(p[0], p[1], p[2], if (days[k] <= day) Theme.AMBER else Theme.CRIMSON_LIGHT, 3f,
                     "$what $name ${TrajectoryModel.dateOf(days[k]).take(4)}", alwaysLabel = true, glow = true,
@@ -425,6 +484,12 @@ class MapPage(
                     info = String.format(Locale.US, "SPACECRAFT\n%s · %.2f AU from the Sun\nMission day %d of %d",
                         dateText(day), r, (day - days.first()).toInt(), days.last() - days.first()), key = "craft")
             }
+        }
+        focusStarTip?.let { tip ->
+            val p = squash(tip)
+            points += MapPoint(p[0], p[1], p[2], Theme.AMBER, 3f, "→ " + focusStar.uppercase(Locale.US), alwaysLabel = true, glow = true,
+                info = "${focusStar.uppercase(Locale.US)}\nThis escape leaves the solar system aimed straight at this Pulsarite star." +
+                    "\nPulsarite plans the journey between the stars from 550 AU on.", key = "star")
         }
         view.setScene(points, staticLines, emptyList(), "")
         timeLabel.text = dateText(day).substring(0, 7)

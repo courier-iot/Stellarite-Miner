@@ -6,7 +6,28 @@ Release numbers are **MAJOR.MEDIUM.MINOR**, and every feature is tagged by size:
 - **[MEDIUM]** a notable addition or improvement to something that already exists
 - **[MINOR]** a small tweak, a fix or polish
 
-A release bumps the number for the biggest change in it and resets the ones after it: a major feature takes 5.4.3 to 6.0.0, a medium one to 5.5.0, and minor-only changes to 5.4.4. The app's `versionName` in `android/app/build.gradle.kts` matches the latest release here, and `versionCode` is MAJOR×10000 + MEDIUM×100 + MINOR (7.0.0 → 70000). Tag a release (e.g. `v7.0.0`) on GitHub and the workflow attaches the APK.
+A release bumps the number for the biggest change in it and resets the ones after it: a major feature takes 5.4.3 to 6.0.0, a medium one to 5.5.0, and minor-only changes to 5.4.4. The app's `versionName` in `android/app/build.gradle.kts` matches the latest release here, and `versionCode` is MAJOR×10000 + MEDIUM×100 + MINOR (9.0.0 → 90000). Tag a release (e.g. `v7.0.0`) on GitHub and the workflow attaches the APK.
+
+## 9.0.0: Escape missions, linking Nebulite and Pulsarite
+
+- **[MAJOR]** Nebulite escape missions: about 1 block in 5 asks for a departure from the solar system aimed exactly at a star from Pulsarite's catalog (favouring planetary systems), scored by years from launch to 550 AU. Flybys of Venus to Saturn, optional Sun dives to 0.05 AU with a perihelion burn, a 17 km/s launch and 3 km/s of fuel. *Consensus change: new chain (genesis v4).*
+- **[MAJOR]** The two coins become one interstellar pipeline: Nebulite plans the departure, Pulsarite the route between the stars. Both share one star catalog (`star_catalog_id` in `/info`).
+- **[MEDIUM]** Escape blocks are always solvable: a block becomes an escape mission only if the baseline search finds a path to its star.
+- **[MEDIUM]** Escape planning in the app (solo and node mining) and in `miner.py`, starting from the block's baseline plan. The best results reach 6–8 AU per year.
+- **[MEDIUM]** The MAP tab and the web map draw escape paths, including Sun dives, with a pointer to the target star. The web map zooms out to fit them.
+- **[MINOR]** Bonus cap: only the first 1.6× improvement over a baseline counts toward an easier hash target (all Nebulite missions).
+- **[MINOR]** Fixed: solo mining with a username another address already owns on that chain produced blocks a node would refuse. The claim is now left out instead.
+- **[MINOR]** The Lambert solver takes a per-mission minimum perihelion (0.3 AU for planet missions, 0.05 AU for escapes).
+
+## 8.0.0: Planet positions accurate past 2050
+
+- **[MAJOR]** Nebulite: planets now follow the full VSOP87A theory (all 39,198 terms, about 1″ for millennia) instead of JPL's approximate elements, which were only fitted for 1800–2050. Giant-planet positions improve from 1–10 million km off to the theory's arcsecond level. Earth is the planet itself, not the Earth-Moon barycentre. *Consensus change: new chain (genesis v3).*
+- **[MEDIUM]** JPL DE440 masses for the Sun and planets, and the IAU astronomical unit.
+- **[MEDIUM]** ACCURACY.md: validation against the official VSOP87 test values, real oppositions and Mars 2003, and an N-body integration to 2150, plus the error budget.
+- **[MINOR]** The node reports `ephemeris_id`, and the app refuses to mine against a node with different planet data.
+- **[MINOR]** Lambert solver: long-way transfers beyond the solver's range are handled explicitly and identically in node and app (they could crash the PC optimiser).
+- **[MINOR]** Tighter real-world tests: oppositions to the hour, Mars 2003 to 0.000002 AU.
+- **[MINOR]** `numpy` is now a Nebulite node requirement. The app bundles the planetary data (about 2 MB).
 
 ## 7.0.0: Planetary surveys, mission types and the web map
 
