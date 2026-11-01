@@ -1,10 +1,16 @@
 # Stellarite Miner
 
-**Pulsarite (PLSR)** is a small cryptocurrency built from scratch for learning, where mining does useful work: every block maps a short route between real nearby stars. **Stellarite Miner** is a cyberpunk-styled Android app that mines it, and can also mine Bitcoin and other SHA-256d coins through mining pools.
+Two small cryptocurrencies built from scratch for learning, where mining does useful space work, plus a cyberpunk-styled Android app that mines them:
 
-- **`node/`**: Python full node with blocks, signed transactions, SHA-256d proof-of-work, automatic difficulty adjustment, peer sync, a mining API, a CLI wallet, and a reference CPU miner.
+- **Pulsarite (PLSR)**: every block maps a short route between real nearby stars.
+- **Nebulite (NBLT)**: every block plans a spacecraft trajectory to an outer planet, using gravity-assist flybys to save fuel and travel time.
+
+**Stellarite Miner** mines both, and can also mine Bitcoin and other SHA-256d coins through mining pools. See [ROADMAP.md](ROADMAP.md) for what's next, including star movement and travel time.
+
+- **`node/`**: the Pulsarite full node (Python): blocks, signed transactions, star-route proof of work, automatic difficulty adjustment, peer sync, a mining API, a CLI wallet, and a reference miner.
+- **`nebulite/`**: the Nebulite full node, a separate coin with its own chain, addresses (`nblt…`) and port (5001), using trajectory proof of work.
 - **`android/`**: Kotlin app ("Stellarite Miner") with the Neon Pulsar theme. It mines Pulsarite through your node, or Bitcoin, Bitcoin Cash and other SHA-256d coins through any Stratum v1 pool, and keeps a ledger of everything you've mined.
-- **`.github/workflows/build.yml`**: runs the node tests and builds the APK on every push. Tag a release (`v1.0`) and the APK is attached to it.
+- **`.github/workflows/build.yml`**: runs both nodes' tests and builds the APK on every push. Tag a release (`v1.0`) and the APK is attached to it.
 
 > This is a teaching coin. The code is readable and tested, but it has not been audited. Don't treat PLSR as something with real monetary value.
 
@@ -100,7 +106,8 @@ The coin chips at the top of the RIG screen switch between:
 
 | Chip | Coin | Connects to |
 |---|---|---|
-| PLSR | Pulsarite | your own node (`http://…:5000`) |
+| PLSR | Pulsarite | your Pulsarite node (`http://…:5000`) |
+| NBLT | Nebulite | your Nebulite node (`http://…:5001`) |
 | BTC | Bitcoin | a Stratum v1 pool |
 | BCH | Bitcoin Cash | a Stratum v1 pool |
 | SHA | any other SHA-256d coin | a Stratum v1 pool |
@@ -181,9 +188,39 @@ The tests cover rewards, transfers, fees, replay and overspend protection, tampe
 
 The app's pool-mining code was checked against a real Bitcoin block (block 125552's header hashes correctly) and against a test Stratum pool that independently verified every submitted share.
 
-## Coming next: Nebulite
+## Nebulite: spacecraft trajectories
 
-**Nebulite (NBLT)** will be a separate coin with its own chain and node, using planet-hopping spacecraft trajectories (gravity assists) as its useful work. It will appear as its own chip in the app.
+Nebulite is a separate coin with its own chain, wallet addresses (`nblt…`), node and default port (5001). Run it alongside Pulsarite or on its own:
+
+```bash
+cd nebulite
+pip install -r requirements.txt
+python node.py --port 5001 --data ./data
+python wallet.py new                 # prints your nblt… address
+python miner.py --address nblt…      # optional: mine from the computer
+```
+
+In the app, pick the **NBLT** chip, enter `http://<your computer's IP>:5001` and your `nblt…` address.
+
+**The problem.** Each block's mission comes from the previous block's hash: get a spacecraft from Earth to Jupiter, Saturn, Uranus or Neptune, launching inside a 4-year window somewhere in 2025–2039, within a maximum flight time (8 to 30 years, depending on the target). Miners choose which planets to fly past on the way (Venus, Earth, Mars, and Jupiter or Saturn when they're on the way) and the date of each encounter.
+
+**The cost** is what a mission planner cares about, in m/s of rocket effort:
+- departure speed from Earth (what the launcher must supply)
+- fuel burned at each flyby: making up speed differences, or turning harder than the planet's gravity allows at a safe distance (1.1 planet radii)
+- arrival speed at the target (what must be shed to stop)
+- travel time: each year of flight counts as 250 m/s
+
+Each leg between planets is solved with Lambert's problem, the standard tool for "leave here on day A, arrive there on day B". The solver was checked against step-by-step orbit integration (agreement to 1e-11) and textbook Hohmann transfers. It refuses paths that dive inside Mercury's orbit, and flybys slower than 1 km/s, which aren't real gravity assists.
+
+**The score.** Every node computes the best *direct* transfer on a coarse grid as the baseline. A trajectory 15% cheaper than that makes the hash target (1/0.85)¹² ≈ 7× easier. In testing, the optimisers found Jupiter-assisted routes to Saturn and Uranus 14–20% cheaper than going direct, the same strategy the Voyager and Cassini missions used. Jupiter missions gain less (2–5%), because there's little to fly past on the way.
+
+**Fair checking.** Costs involve floating-point maths, which can differ in the last digit between computers. Blocks therefore carry their claimed cost, and nodes accept it within 1 m/s of their own result, so rounding can never split the network. (The phone's Kotlin physics matches the node's Python to 0.000005 m/s across 3,600 test trajectories.)
+
+**On the phone.** The rig plans each new mission for about 3 seconds, searching every flyby sequence with up to 2 flybys, then keeps refining every 10 seconds while it hashes. The HUD shows the live plan, e.g. `MISSION E-J-S · 11.53 KM/S · 8.6 YR · 20.7% CHEAPER THAN DIRECT`, and the ledger records missions planned and your best mission.
+
+**The mission log.** `GET /missions` lists recent blocks' trajectories: planet path, encounter days, Δv, years and improvement.
+
+**Limits today.** Planets move on circular, flat orbits; there are no deep-space engine burns or multi-loop transfers; arrival is scored as arrival speed rather than orbit insertion. ROADMAP.md covers each of these.
 
 ## Known limitations (good next steps)
 

@@ -201,7 +201,11 @@ class MainActivity : Activity() {
         user.setText(prefs.user(c.id))
         pass.setText(prefs.password(c.id))
         passGroup.visibility = if (stratum) View.VISIBLE else View.GONE
-        val algo = if (stratum) "SHA-256d" else "STAR ROUTES + SHA-256d"
+        val algo = when (c.kind) {
+            WorkKind.STAR_ROUTES -> "STAR ROUTES + SHA-256d"
+            WorkKind.TRAJECTORIES -> "TRAJECTORIES + SHA-256d"
+            WorkKind.NONE -> "SHA-256d"
+        }
         coinNote.text = "> ${c.name.uppercase(Locale.US)} · $algo\n${c.note}"
         foundLabel.text = if (stratum) "SHARES" else "BLOCKS"
         thirdLabel.text = if (stratum) "UPTIME" else c.ticker
@@ -230,9 +234,9 @@ class MainActivity : Activity() {
             c.protocol == Protocol.STRATUM && !prefs.url(c.id).startsWith("stratum+") -> {
                 url.error = "Pool addresses look like stratum+tcp://host:port"; return
             }
-            c.protocol == Protocol.NODE && (!prefs.user(c.id).startsWith(Coin.ADDRESS_PREFIX) ||
-                prefs.user(c.id).length != Coin.ADDRESS_LENGTH) -> {
-                user.error = "Paste the address printed by: python wallet.py new"; return
+            c.protocol == Protocol.NODE && (!prefs.user(c.id).startsWith(c.addressPrefix) ||
+                prefs.user(c.id).length != c.addressLength) -> {
+                user.error = "Paste the ${c.addressPrefix}… address printed by: python wallet.py new"; return
             }
             prefs.user(c.id).isBlank() -> { user.error = "Enter your worker name"; return }
         }
@@ -263,8 +267,8 @@ class MainActivity : Activity() {
         val backend = prefs.backend()
         Thread {
             val text = try {
-                if (backend is NodeClient) {
-                    val info = backend.info()
+                if (backend is NodeClient || backend is NebuliteClient) {
+                    val info = if (backend is NodeClient) backend.info() else (backend as NebuliteClient).info()
                     "> LINK OK · ${info.optString("coin")} node · height ${info.optLong("height")}"
                 } else {
                     val job = backend.getWork()
@@ -312,11 +316,10 @@ class MainActivity : Activity() {
             s.pausedReason != null -> "PAUSED: ${s.pausedReason}"
             else -> s.message
         }
-        val r = s.route
-        if (running && r != null && prefs.coin.protocol == Protocol.NODE) {
+        val w = s.work
+        if (running && w != null && prefs.coin.protocol == Protocol.NODE) {
             route.visibility = View.VISIBLE
-            route.text = String.format(Locale.US, "ROUTE %d★ · %.1f LY · %.1f%% SHORTER THAN GREEDY",
-                r.starIds.size, r.lengthLy, r.improvementPct)
+            route.text = w.summary
         } else {
             route.visibility = View.GONE
         }

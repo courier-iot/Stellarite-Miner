@@ -63,14 +63,14 @@ class NodeClient(baseUrl: String, private val address: String = "") : PoolBacken
             littleEndian = false,
             rewardUnits = work.getLong("reward"),
             unitsPerCoin = work.getLong("units_per_coin"),
-            route = RouteInfo(route, scored.getDouble("length_ly"), scored.getDouble("baseline_ly"),
+            work = RouteInfo(route, scored.getDouble("length_ly"), scored.getDouble("baseline_ly"),
                 scored.getDouble("improvement_pct")),
         )
     }
 
     /** [nonce] is kept in 0..Long.MAX_VALUE so it survives JSON as a plain number. */
     override fun submit(job: Job, nonce: Long): SubmitResult {
-        val route = JSONArray(job.route?.starIds ?: emptyList<Int>())
+        val route = JSONArray((job.work as? RouteInfo)?.starIds ?: emptyList<Int>())
         val payload = JSONObject().put("job_id", job.id).put("route", route).put("nonce", nonce)
         val (code, body) = request("POST", "/mining/submit", payload)
         return if (code == 200 && body.optBoolean("ok")) {
@@ -83,7 +83,7 @@ class NodeClient(baseUrl: String, private val address: String = "") : PoolBacken
     override fun hasNewWork() = false
     override fun close() {}
 
-    private fun request(method: String, path: String, payload: JSONObject?): Pair<Int, JSONObject> {
+    internal fun request(method: String, path: String, payload: JSONObject?): Pair<Int, JSONObject> {
         val conn = URL(base + path).openConnection() as HttpURLConnection
         try {
             conn.requestMethod = method

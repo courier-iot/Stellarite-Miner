@@ -60,18 +60,26 @@ class LedgerPage(private val container: LinearLayout, private val ledger: Ledger
         head.addView(text(t.ticker, 12f, Theme.AMBER, spacing = 0.15f))
         card.addView(head)
 
-        val earned = if (t.coinId == "plsr") "${Format.coins(t.earnedUnits, t.unitsPerCoin)} ${t.ticker}"
+        val kind = CoinProfile.byId(t.coinId).kind
+        val earned = if (kind != WorkKind.NONE) "${Format.coins(t.earnedUnits, t.unitsPerCoin)} ${t.ticker}"
             else "paid by your pool"
         val rows = mutableListOf(
             "TIME_MINED" to Format.duration(t.seconds),
             "HASHES" to Format.count(t.hashes),
-            (if (t.coinId == "plsr") "ROUTES_MAPPED" else t.unit.uppercase(Locale.US)) to t.accepted.toString(),
+            when (kind) {
+                WorkKind.STAR_ROUTES -> "ROUTES_MAPPED"
+                WorkKind.TRAJECTORIES -> "MISSIONS_PLANNED"
+                WorkKind.NONE -> t.unit.uppercase(Locale.US)
+            } to t.accepted.toString(),
             "REJECTED" to t.rejected.toString(),
             "SESSIONS" to t.sessions.toString(),
             "EARNED" to earned,
         )
-        if (t.coinId == "plsr" && t.bestGainPct > 0) {
+        if (kind == WorkKind.STAR_ROUTES && t.bestGainPct > 0) {
             rows.add(3, "BEST_ROUTE" to String.format(Locale.US, "%.1f%% shorter than greedy", t.bestGainPct))
+        }
+        if (kind == WorkKind.TRAJECTORIES && t.bestGainPct > 0) {
+            rows.add(3, "BEST_MISSION" to String.format(Locale.US, "%.1f%% cheaper than direct", t.bestGainPct))
         }
         rows.forEach { (k, v) -> card.addView(statRow(k, v, k == "EARNED")) }
 
@@ -98,7 +106,7 @@ class LedgerPage(private val container: LinearLayout, private val ledger: Ledger
             addView(text("${Format.duration(s.seconds)} · ${Format.count(s.hashes)} hashes", 11f, Theme.MUTED, top = 2f))
         }
         addView(left, LinearLayout.LayoutParams(0, -2, 1f))
-        val right = if (s.coinId == "plsr" && s.earnedUnits > 0)
+        val right = if (CoinProfile.byId(s.coinId).kind != WorkKind.NONE && s.earnedUnits > 0)
             "+${Format.coins(s.earnedUnits, s.unitsPerCoin, 2)}" else "${s.accepted} ${s.unit}"
         addView(text(right, 13f, if (s.accepted > 0) Theme.AMBER else Theme.MUTED))
         layoutParams = LinearLayout.LayoutParams(-1, -2)

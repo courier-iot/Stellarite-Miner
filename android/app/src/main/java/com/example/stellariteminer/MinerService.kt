@@ -35,8 +35,8 @@ data class MinerStatus(
     val unitsPerCoin: Long = 100_000_000,
     val message: String = "RIG_IDLE",
     val startedAt: Long = 0,
-    val route: RouteInfo? = null,      // route of the job being hashed (Pulsarite)
-    val bestGainPct: Double = 0.0,     // best route improvement among accepted blocks
+    val work: UsefulWork? = null,      // useful work of the job being hashed (own coins)
+    val bestGainPct: Double = 0.0,     // best improvement over baseline among accepted blocks
 )
 
 /**
@@ -168,7 +168,7 @@ class MinerService : Service() {
                     status = if (result.accepted) status.copy(
                         accepted = status.accepted + 1,
                         earnedUnits = status.earnedUnits + job.rewardUnits,
-                        bestGainPct = maxOf(status.bestGainPct, job.route?.improvementPct ?: 0.0),
+                        bestGainPct = maxOf(status.bestGainPct, job.work?.gainPct ?: 0.0),
                         message = result.message.uppercase(Locale.US).replace(' ', '_'),
                     ) else status.copy(rejected = status.rejected + 1, message = "REJECTED: ${result.message}")
                     if (job.nonceSize == 8) lastFetch = 0  // own node: that job is spent, get the next block
@@ -180,7 +180,7 @@ class MinerService : Service() {
                     val job = node.getWork()
                     eng.job = job
                     lastFetch = now
-                    status = status.copy(height = job.height, unitsPerCoin = job.unitsPerCoin, route = job.route,
+                    status = status.copy(height = job.height, unitsPerCoin = job.unitsPerCoin, work = job.work,
                         message = if (solution == null) "MINING_ACTIVE" else status.message)
                 }
             } catch (e: InterruptedException) {

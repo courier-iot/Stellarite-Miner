@@ -3,9 +3,12 @@ package com.example.stellariteminer
 /** How the app reaches the network for a coin. */
 enum class Protocol { NODE, STRATUM }
 
+/** What mining a coin involves on top of hashing. */
+enum class WorkKind { STAR_ROUTES, TRAJECTORIES, NONE }
+
 /**
  * A coin the app can mine. Every coin here uses SHA-256d hashing (Pulsarite adds
- * star-route useful work on top); adding a CPU-friendly algorithm (e.g. RandomX for Monero)
+ * star-route useful work on top, Nebulite adds spacecraft trajectories); adding a CPU-friendly algorithm (e.g. RandomX for Monero)
  * would mean adding a new hashing engine.
  */
 class CoinProfile(
@@ -17,6 +20,9 @@ class CoinProfile(
     val userLabel: String,
     val userHint: String,
     val note: String,
+    val kind: WorkKind = WorkKind.NONE,
+    val addressPrefix: String = "",     // own coins: required address prefix
+    val addressLength: Int = 0,
 ) {
     companion object {
         val ALL = listOf(
@@ -27,6 +33,17 @@ class CoinProfile(
                 note = "Mines your own coin through your node. Every block needs a route through 24 nearby " +
                     "stars: the rig keeps shortening it while it hashes, and shorter routes make " +
                     "blocks easier to win. Blocks pay straight to your address.",
+                kind = WorkKind.STAR_ROUTES, addressPrefix = Coin.ADDRESS_PREFIX, addressLength = Coin.ADDRESS_LENGTH,
+            ),
+            CoinProfile(
+                id = "nblt", name = "Nebulite", ticker = NebuliteCoin.TICKER, protocol = Protocol.NODE,
+                urlHint = "http://192.168.1.10:5001",
+                userLabel = "WALLET_ADDR", userHint = "${NebuliteCoin.ADDRESS_PREFIX}…",
+                note = "Mines Nebulite through its own node. Every block needs a spacecraft trajectory " +
+                    "from Earth to an outer planet: the rig searches gravity-assist flybys for the " +
+                    "least fuel and travel time, and cheaper missions make blocks easier to win.",
+                kind = WorkKind.TRAJECTORIES, addressPrefix = NebuliteCoin.ADDRESS_PREFIX,
+                addressLength = NebuliteCoin.ADDRESS_LENGTH,
             ),
             CoinProfile(
                 id = "btc", name = "Bitcoin", ticker = "BTC", protocol = Protocol.STRATUM,

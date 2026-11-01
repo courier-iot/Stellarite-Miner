@@ -18,16 +18,40 @@ class Job(
     val rewardUnits: Long = 0,  // known reward if this job solves a block (own node only)
     val unitsPerCoin: Long = 100_000_000,
     val extra: Any? = null,     // backend-specific data needed to submit (e.g. Stratum extranonce2)
-    val route: RouteInfo? = null,  // Pulsarite only: the star route this job's header commits to
+    val work: UsefulWork? = null,  // the useful work this job's header commits to (own coins)
 )
 
-/** The useful-work half of a Pulsarite job: the route through this block's stars. */
+/** The useful-work half of a job, shown on the HUD and recorded in the ledger. */
+interface UsefulWork {
+    val summary: String      // one HUD line
+    val gainPct: Double      // how much better than the network's baseline
+}
+
+/** Pulsarite: the route through this block's stars. */
 data class RouteInfo(
     val starIds: List<Int>,
     val lengthLy: Double,
     val baselineLy: Double,
     val improvementPct: Double,
-)
+) : UsefulWork {
+    override val summary get() = String.format(java.util.Locale.US,
+        "ROUTE %d★ · %.1f LY · %.1f%% SHORTER THAN GREEDY", starIds.size, lengthLy, improvementPct)
+    override val gainPct get() = improvementPct
+}
+
+/** Nebulite: the spacecraft trajectory for this block's mission. */
+data class TrajectoryInfo(
+    val seq: List<Int>,
+    val days: List<Int>,
+    val path: String,          // e.g. "E-J-S"
+    val dvKms: Double,
+    val years: Double,
+    val improvementPct: Double,
+) : UsefulWork {
+    override val summary get() = String.format(java.util.Locale.US,
+        "MISSION %s · %.2f KM/S · %.1f YR · %.1f%% CHEAPER THAN DIRECT", path, dvKms, years, improvementPct)
+    override val gainPct get() = improvementPct
+}
 
 class SubmitResult(val accepted: Boolean, val message: String)
 

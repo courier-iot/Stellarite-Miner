@@ -13,7 +13,7 @@ class Prefs(context: Context) {
     val coin: CoinProfile get() = CoinProfile.byId(coinId)
 
     fun url(coin: String): String =
-        sp.getString("url_$coin", null) ?: if (coin == "plsr") CoinProfile.byId(coin).urlHint else ""
+        sp.getString("url_$coin", null) ?: CoinProfile.byId(coin).let { if (it.protocol == Protocol.NODE) it.urlHint else "" }
     fun setUrl(coin: String, v: String) = sp.edit().putString("url_$coin", v.trim()).apply()
 
     fun user(coin: String): String = sp.getString("user_$coin", "")!!
@@ -34,7 +34,8 @@ class Prefs(context: Context) {
     fun backend(): PoolBackend {
         val c = coin
         return when (c.protocol) {
-            Protocol.NODE -> NodeClient(url(c.id), user(c.id))
+            Protocol.NODE -> if (c.kind == WorkKind.TRAJECTORIES) NebuliteClient(url(c.id), user(c.id))
+                else NodeClient(url(c.id), user(c.id))
             Protocol.STRATUM -> StratumClient(url(c.id), user(c.id), password(c.id))
         }
     }
