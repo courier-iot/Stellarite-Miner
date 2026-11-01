@@ -59,13 +59,23 @@ data class TrajectoryInfo(
     val escape: org.json.JSONObject? = null,
     val starName: String = "",
     val vinfKms: Double = 0.0,
+    /** Interstellar-object intercepts: the speed of the flyby past the object (km/s). */
+    val encounterKms: Double = 0.0,
+    /** Interstellar-object intercepts: the object's orbit (the mission's "iso" block), for the map. */
+    val iso: org.json.JSONObject? = null,
 ) : UsefulWork {
-    /** Planet missions: arrival at the target. Escape missions: passing 550 AU. */
+    /** Planet missions and intercepts: arrival at the target. Escape missions: passing 550 AU (120 AU for heliopause runs). */
     val arrivalDate get() = if (escape != null) TrajectoryModel.dateOf(days.first() + years * 365.25)
         else TrajectoryModel.dateOf(days.last())
-    override val summary get() = if (escape != null) String.format(java.util.Locale.US,
+    override val summary get() = if (escape != null && missionType == "heliopause") String.format(java.util.Locale.US,
+        "HELIOPAUSE RUN · %s · %.1f KM/S (%.2f AU/YR) · 120 AU IN %.1f YR · %.1f%% FASTER THAN BASELINE",
+        path, vinfKms, vinfKms / Escape.KM_S_PER_AU_YEAR, years, improvementPct)
+    else if (escape != null) String.format(java.util.Locale.US,
         "ESCAPE → %s · %s · %.1f KM/S (%.2f AU/YR) · 550 AU IN %.0f YR · %.1f%% FASTER THAN BASELINE",
         starName.uppercase(java.util.Locale.US), path, vinfKms, vinfKms / Escape.KM_S_PER_AU_YEAR, years, improvementPct)
+    else if (missionType == "intercept") String.format(java.util.Locale.US,
+        "INTERCEPT · INTERSTELLAR OBJECT · %s · %.2f KM/S · MEETS IT AT %.1f KM/S ON %s · %.1f%% CHEAPER THAN DIRECT",
+        path, dvKms, encounterKms, arrivalDate, improvementPct)
     else String.format(java.util.Locale.US,
         "%s MISSION %s · %.2f KM/S · %.1f YR · ARRIVES %s · %.1f%% CHEAPER THAN DIRECT",
         missionType.uppercase(java.util.Locale.US), path, dvKms, years, arrivalDate, improvementPct)

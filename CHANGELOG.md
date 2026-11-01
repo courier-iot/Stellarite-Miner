@@ -6,7 +6,25 @@ Release numbers are **MAJOR.MEDIUM.MINOR**, and every feature is tagged by size:
 - **[MEDIUM]** a notable addition or improvement to something that already exists
 - **[MINOR]** a small tweak, a fix or polish
 
-A release bumps the number for the biggest change in it and resets the ones after it: a major feature takes 5.4.3 to 6.0.0, a medium one to 5.5.0, and minor-only changes to 5.4.4. The app's `versionName` in `android/app/build.gradle.kts` matches the latest release here, and `versionCode` is MAJOR×10000 + MEDIUM×100 + MINOR (10.1.0 → 100100). Tag a release (e.g. `v7.0.0`) on GitHub and the workflow attaches the APK.
+A release bumps the number for the biggest change in it and resets the ones after it: a major feature takes 5.4.3 to 6.0.0, a medium one to 5.5.0, and minor-only changes to 5.4.4. The app's `versionName` in `android/app/build.gradle.kts` matches the latest release here, and `versionCode` is MAJOR×10000 + MEDIUM×100 + MINOR (12.0.0 → 120000). Tag a release (e.g. `v7.0.0`) on GitHub and the workflow attaches the APK.
+
+## 12.0.0: Heliopause runs, interstellar-object intercepts and powered flybys
+
+- **[MAJOR]** Interstellar-object intercepts (1 Nebulite block in 8): catch an object passing through the solar system from another star, like 'Oumuamua (2017), Borisov (2019) and 3I/ATLAS (2025). Each block draws an object on a hyperbolic orbit (20–60 km/s from the Sun, perihelion 0.3–3 AU, any direction, closest approach 300–900 days after discovery). The probe launches within two years and must meet it within six; the cost counts the encounter speed at a tenth, because it's a flyby, not a rendezvous. *Consensus change: new Nebulite chain (genesis v5).*
+- **[MAJOR]** Heliopause runs (1 block in 8): an escape aimed at the heliosphere's nose (ecliptic 255.7°, +5.1°, from IBEX), scored by the time to reach 120 AU, where both Voyagers crossed into interstellar space. They use the escape rules (flybys, Sun dives, 17 km/s launch, 3 km/s of burns) but aren't scouts, since they aren't aimed at a star.
+- **[MAJOR]** Powered flybys: a flyby can burn at closest approach, and its periapsis is chosen to give exactly the bend needed. A burn deep in a planet's gravity well changes the outgoing speed by more than the same burn far away (the Oberth effect). Jupiter flybys that change speed now cost much less, so escapes reach 6–8 AU/yr and heliopause runs reach 120 AU in about 16–25 years (the Interstellar Probe study targets about 16). *Pulsarite checks scouts with Nebulite's physics, so it starts a new chain too (genesis v8).*
+- **[MEDIUM]** New mission draw: out of 8 blocks, 2 star escapes, 1 heliopause run, 1 intercept and 4 planet missions. A special mission is used only if the baseline search finds a path, so every block can always be mined.
+- **[MEDIUM]** All three work in the app (network and solo mode), cross-checked against the node: identical mission draws on 160 blocks, intercept orbits within 4e-14 AU, powered-flyby burns within 7e-15 km/s and costs within 1e-8 m/s. A phone-mined chain with intercepts and heliopause runs is accepted by the node.
+- **[MINOR]** The phone and PC optimisers start from the block's baseline, so a submitted plan is never worse than the direct one.
+- **[MINOR]** Maps: the interstellar object's path (pink) and a live marker for it, the heliosphere's nose pointer, and new rows in `/missions`, `/map` and the MAP tab (encounter speed, the object's discovery and perihelion dates).
+- **[MINOR]** `tools/make_scouts.py` can mine heliopause runs (`MISSION_TYPE=heliopause`), used by a test that Pulsarite rejects them as scouts.
+
+## 11.0.0: Scouts share the reward
+
+- **[MAJOR]** Scout rewards: each Nebulite escape cited as a scout earns its miner 5% of the Pulsarite block reward (2.5 PLSR), newly minted in the citing block's coinbase (`scout_rewards`) and paid to the same wallet's Pulsarite address. The Pulsarite miner keeps their full reward. *Consensus change: new Pulsarite chain (genesis v7).*
+- **[MEDIUM]** Scout proofs now carry the Nebulite block's coinbase and transaction IDs. Nodes and the app check that they reproduce the block's `tx_root`, so a scout's miner can't be swapped. Nebulite's `/scouts` includes them.
+- **[MINOR]** Solo mode pays scouts too, and solo balances include scout earnings.
+- **[MINOR]** `/routes` shows who each scout paid and how much. `tools/make_scouts.py` takes a miner address.
 
 ## 10.1.0: Scouts in solo mode
 

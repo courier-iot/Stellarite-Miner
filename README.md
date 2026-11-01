@@ -250,7 +250,7 @@ In the app, pick the **NBLT** chip, enter `http://<your computer's IP>:5001` and
 
 **Mission types.** The hash also picks what's flying, which changes how much time is worth:
 
-| Type | Share of blocks | A year of travel costs | Flight time allowed |
+| Type | Share of planet missions (4 blocks in 8) | A year of travel costs | Flight time allowed |
 |---|---|---|---|
 | Science (robotic probe) | 1 in 2 | 250 m/s | full (8–30 years) |
 | Cargo (supplies) | 1 in 4 | 50 m/s | full |
@@ -260,7 +260,7 @@ So the same block-to-block skill pays off differently: cargo missions favour lon
 
 **The cost** is what a mission planner cares about, in m/s of rocket effort:
 - departure speed from Earth (what the launcher must supply)
-- fuel burned at each flyby: making up speed differences, or turning harder than the planet's gravity allows at a safe distance (1.1 planet radii)
+- fuel burned at each flyby. Flybys are **powered**: the craft can burn at closest approach, where the planet's gravity well multiplies the burn's effect (the Oberth effect), and the closest-approach distance is chosen to give exactly the bend needed. Turning harder than the planet allows at a safe distance (1.1 planet radii) costs extra fuel
 - arrival speed at the target (what must be shed to stop)
 - travel time: each year of flight counts as 50, 250 or 3,000 m/s, depending on the mission type
 
@@ -280,17 +280,34 @@ Each leg between planets is solved with Lambert's problem, the standard tool for
 
 The two coins work as one pipeline for interstellar missions: **Nebulite plans the departure from the solar system, and Pulsarite plans the journey between the stars.**
 
-About **1 Nebulite block in 5** is an **escape mission**. The block's hash picks a target star from Pulsarite's catalog, favouring stars with known planets (the same rule as Pulsarite's survey stops). The miner must get a probe out of the solar system on a path whose final direction points **exactly** at that star, as fast as possible. The score is the **time from launch until the probe passes 550 AU**, where the Sun's gravity starts to focus light from the target star into a telescope. Pulsarite takes it from there.
+Out of every 8 Nebulite blocks, **2 are escape missions**, **1 is a heliopause run** and **1 is an interstellar-object intercept** (below); the other 4 are planet missions.
+
+An **escape mission**: The block's hash picks a target star from Pulsarite's catalog, favouring stars with known planets (the same rule as Pulsarite's survey stops). The miner must get a probe out of the solar system on a path whose final direction points **exactly** at that star, as fast as possible. The score is the **time from launch until the probe passes 550 AU**, where the Sun's gravity starts to focus light from the target star into a telescope. Pulsarite takes it from there.
 
 - **Launch:** up to 17 km/s from Earth (C3 ≈ 290 km²/s²). That's an SLS-class rocket with kick stages, the assumption of the Johns Hopkins APL Interstellar Probe study.
 - **Fuel after launch:** up to 3 km/s in total, for burns at flybys and at the Sun.
-- **Flybys:** Venus, Earth, Mars, Jupiter and Saturn, up to three. A flyby at Jupiter or Saturn can also tilt the path out of the planets' plane, toward stars far above or below it, the way Ulysses left the ecliptic.
+- **Flybys:** Venus, Earth, Mars, Jupiter and Saturn, up to three, each with an optional burn at closest approach (a powered flyby, the "Jupiter Oberth" option the Interstellar Probe study favoured). A flyby at Jupiter or Saturn can also tilt the path out of the planets' plane, toward stars far above or below it, the way Ulysses left the ecliptic.
 - **Sun dives:** a path may fall to as close as 0.05 AU (about the Parker Solar Probe's distance) and burn at perihelion, the "solar Oberth" manoeuvre. In this model dives rarely pay off: getting from Jupiter onto a sunward orbit costs most of the fuel. That matches the Interstellar Probe study's own conclusion that the manoeuvre "offers no advantage over prograde gravity assists". Miners still find the occasional geometry where one helps.
 - **Aim:** the escape asymptote points at the star to better than a billionth of a radian. The 550 AU timing is checked against a direct numerical integration.
 - **Always solvable:** a block only becomes an escape mission if the baseline search finds a working path toward its star; otherwise it's a planet mission. Every escape block therefore has at least one valid answer.
 - **Baseline:** the best of three textbook strategies on a coarse grid (direct launch, Jupiter flyby, Jupiter flyby plus Sun dive), each at the fastest speed its limits allow.
 
 Typical results in testing: the best escapes left at 30–37 km/s (**6–8 AU per year**, about twice Voyager 1's 3.6), reaching 550 AU in 70–90 years. Most were 20–30 km/s, and awkward star directions in poor launch windows can be much slower. APL's Interstellar Probe study targets about 7 AU per year with today's technology. Even so, Alpha Centauri is tens of thousands of years away at these speeds. Reaching the stars needs new propulsion, and these departures are the first leg of any such mission. The mission log, HUD, MAP tab and web map show each escape's target star, speed and the year it passes 550 AU, with a pointer toward the star.
+
+### Heliopause runs
+
+A heliopause run is an escape aimed at the **nose of the heliosphere**, the direction the interstellar wind blows in from (ecliptic longitude 255.7°, latitude 5.1°, measured by NASA's IBEX). It's scored by the time to reach **120 AU**, about where Voyager 1 (2012) and Voyager 2 (2018) crossed the heliopause into interstellar space. This is the first goal of the Interstellar Probe study. Same launch, fuel, flyby and Sun-dive rules as an escape. In testing the best runs reach 120 AU in **16–20 years** (Voyager 1 took 35). Heliopause runs aren't aimed at a star, so they can't be Pulsarite scouts.
+
+### Interstellar-object intercepts
+
+Objects from other stars pass through the solar system: 'Oumuamua (2017), Borisov (2019) and 3I/ATLAS (2025). They're found only months before their closest approach to the Sun, and then they leave for good. An intercept block draws one on a hyperbolic orbit within the range of those three:
+
+- **The object:** 20–60 km/s far from the Sun, closest approach 0.3–3 AU, arriving from any direction in the sky, closest to the Sun 300–900 days after its discovery (the block's window start).
+- **The probe:** launches 60–730 days after discovery and must reach the object within 6 years, with up to three flybys of Venus, Earth, Mars or Jupiter.
+- **The cost:** launch and flyby burns, plus the speed of the encounter at a **tenth** of its value (a flyby past the object, like ESA's Comet Interceptor, not a rendezvous), plus 250 m/s per year of flight.
+- **The orbit** is an exact Kepler hyperbola; tests check it against a step-by-step integration (under 1 km apart after 800 days).
+
+Typical plans launch at 4–9 km/s and meet the object at 25–60 km/s. Mission rows show the object's discovery date, its speed, its closest approach and the encounter speed, and the maps draw its path in pink.
 
 ### Scouts: how Nebulite's escapes guide Pulsarite's routes
 
@@ -299,9 +316,10 @@ Pulsarite's probe assumes a future drive, reaching 10% of light speed, while Neb
 - **A Nebulite escape is a scout.** Past 550 AU it uses the Sun's gravity as a lens to image its target star's planets.
 - **A scouted stop becomes a flyby.** When a Pulsarite block's survey stop has been scouted, the probe doesn't need to stop there: it flies past at speed, with no braking, no survey years, and much less fuel. In testing, one scouted stop made a whole mission 12–24% faster (600–1,200 years), and four made it about 40% faster.
 - **The proof travels in the block.** A Pulsarite block cites a scout by including the Nebulite block itself (header, trajectory and nonce). Every Pulsarite node re-checks the escape physics and the proof of work on its own, so it never contacts the Nebulite network and neither chain can stall the other.
-- **Forging doesn't pay.** A cited Nebulite block must carry at least a third of the hashing the Pulsarite block needs. Each Nebulite block can be cited only once. Scouts can make a Pulsarite hash target at most about 1.27× easier, which saves at most 21% of the hashing. So a fake scout always costs more than it saves, while the full time saving still shows in the mission log and maps.
+- **Forging doesn't pay.** A cited Nebulite block must carry at least a third of the hashing the Pulsarite block needs. Each Nebulite block can be cited only once. Scouts can make a Pulsarite hash target at most about 1.27× easier, which saves at most 21% of the hashing. Even someone citing their own fake scout, and collecting its 5% reward, gains less than the third of a block's work the fake scout cost, while the full time saving still shows in the mission log and maps.
+- **Scouts get paid.** Each cited scout earns its Nebulite miner **5% of the Pulsarite block reward** (2.5 PLSR today), newly minted and paid in the citing block's coinbase. The Pulsarite miner keeps their full reward. Payment goes to the same wallet's Pulsarite address: one key gives both a `nblt…` and a `plsr…` address that differ only in prefix, so mining Nebulite escapes earns Pulsarite too. The proof carries the Nebulite block's coinbase and transaction IDs, and every node checks they reproduce the block's `tx_root`, so the payee can't be swapped.
 - **Automatic for miners.** Start the Pulsarite node with `NEBULITE_URL` set to a Nebulite node (the Docker setup does this). It then fetches escape missions from that node's `/scouts`, checks them, and attaches the best one for each survey stop to the work it hands out. Phones and `miner.py` simply see the scouted stops as flybys. The RIG line shows `+ 1 SCOUTED`, and the maps mark scouted stars ✦.
-- **Solo mode too:** with SOLO MODE on, Pulsarite routes can cite escape missions from the phone's own Nebulite solo chain. Mine some Nebulite solo blocks first; about 1 in 5 is an escape mission. The same rules apply as on a node (proof in the block, work rule, cite once), so a solo chain with scouts is accepted when you push it, as long as you push the Nebulite chain to the matching Nebulite network as well.
+- **Solo mode too:** with SOLO MODE on, Pulsarite routes can cite escape missions from the phone's own Nebulite solo chain. Mine some Nebulite solo blocks first; about 2 in 8 are escape missions toward a star. The same rules apply as on a node (proof in the block, work rule, cite once), so a solo chain with scouts is accepted when you push it, as long as you push the Nebulite chain to the matching Nebulite network as well.
 
 `python tools/make_scouts.py` mines Nebulite escape blocks for testing and demos.
 

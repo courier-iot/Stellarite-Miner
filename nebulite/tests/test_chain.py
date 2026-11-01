@@ -218,13 +218,13 @@ class ChainTests(unittest.TestCase):
             h = hashlib.sha256(str(k).encode()).hexdigest()
             p = T.problem(h)
             seen.setdefault(p["type"], p)
-            if p["type"] == "escape":
+            if p["type"] not in T.MISSION_TYPES:          # escape, heliopause, intercept
                 continue
             planet_hash = h
             mt = T.MISSION_TYPES[p["type"]]
             self.assertEqual(p["time_penalty_mps_per_year"], mt["time_penalty_mps_per_year"])
             self.assertEqual(p["max_tof_days"], int(T.MAX_TOF_YEARS[p["target"]] * 365.25 * mt["tof_share"]))
-        self.assertEqual(set(seen), {"science", "cargo", "crewed", "escape"})
+        self.assertEqual(set(seen), {"science", "cargo", "crewed", "escape", "heliopause", "intercept"})
         # the same trajectory costs more when time is dear
         b0 = T.baseline(planet_hash)                      # any real trajectory will do
         seq, days = b0["seq"], b0["days"]
@@ -589,6 +589,116 @@ class EphemerisTests(unittest.TestCase):
             for fb in ev["flyby_kms"]:
                 self.assertLess(fb, 0.5)
 
+
+
+
+class InterstellarTests(unittest.TestCase):
+    """12.0.0: powered flybys, heliopause runs and interstellar-object intercepts."""
+
+    @staticmethod
+    def _hashes(n=300):
+        import hashlib
+        return [hashlib.sha256(b"is" + str(k).encode()).hexdigest() for k in range(n)]
+
+    def test_powered_flyby_geometry(self):
+        import math, random
+        rng = random.Random(3)
+        for _ in range(200):
+            pid = rng.choice([1, 2, 3, 4, 5])
+            mu, radius = T.PLANETS[pid][2], T.PLANETS[pid][3]
+            a, b = rng.uniform(3, 15), rng.uniform(3, 15)
+            vin = (a, 0.0, 0.0)
+            turn = rng.uniform(0, 1.5)
+            vout = (b * math.cos(turn), b * math.sin(turn), 0.0)
+            dv = T.flyby_dv(pid, vin, vout)
+            # never worse than an unpowered flyby plus a burn far from the planet (the Oberth effect)
+            rp_min = T.FLYBY_SAFETY * radius
+            reach = math.asin(1 / (1 + rp_min * a * a / mu)) + math.asin(1 / (1 + rp_min * b * b / mu))
+            if turn <= reach:
+                self.assertLessEqual(dv, abs(b - a) + 1e-12)
+                # the chosen periapsis really bends the path by the needed angle
+                lo, hi = rp_min, 1e12
+                for _ in range(T.FLYBY_RP_ITERATIONS):
+                    mid = math.sqrt(lo * hi)
+                    if math.asin(1 / (1 + mid * a * a / mu)) + math.asin(1 / (1 + mid * b * b / mu)) > turn:
+                        lo = mid
+                    else:
+                        hi = mid
+                rp = math.sqrt(lo * hi)
+                got = math.asin(1 / (1 + rp * a * a / mu)) + math.asin(1 / (1 + rp * b * b / mu))
+                self.assertAlmostEqual(got, turn, delta=1e-9)
+                # energy: the burn at periapsis takes the craft from one hyperbola to the other
+                self.assertAlmostEqual(dv, abs(math.sqrt(b * b + 2 * mu / rp) - math.sqrt(a * a + 2 * mu / rp)), delta=1e-12)
+        self.assertAlmostEqual(T.flyby_dv(4, (8.0, 0, 0), (0, 8.0, 0)), 0.0, delta=1e-12)   # Jupiter turns 90 deg for free
+
+    def test_mission_draw(self):
+        from collections import Counter
+        c = Counter(T.problem(h)["type"] for h in self._hashes(400))
+        planet = c["science"] + c["cargo"] + c["crewed"]
+        self.assertGreater(planet, 400 * 0.4)            # 4 in 8, plus any special mission that had no solution
+        for kind, share in (("escape", 2 / 8), ("heliopause", 1 / 8), ("intercept", 1 / 8)):
+            self.assertLess(abs(c[kind] / 400 - share), 0.06, (kind, c[kind]))
+
+    def test_iso_orbit(self):
+        import math
+        h = next(x for x in self._hashes() if T.problem(x)["type"] == "intercept")
+        p = T.problem(h); iso = p["iso"]
+        r, v = T.iso_state(iso, iso["t_peri"])
+        self.assertAlmostEqual(T._norm(r), iso["q_au"], delta=1e-12)               # perihelion distance
+        self.assertAlmostEqual(T._dot(r, v), 0.0, delta=1e-14)                     # moving sideways at perihelion
+        for d in (-900.0, 37.5, 1500.0):
+            r, v = T.iso_state(iso, iso["t_peri"] + d)
+            vinf = math.sqrt(T._dot(v, v) - 2 * T.MU_SUN / T._norm(r)) * T.AU_PER_DAY_TO_KMS
+            self.assertAlmostEqual(vinf, iso["vinf_kms"], delta=1e-9)              # energy
+        r, v = T.iso_state(iso, iso["t_peri"] - 3e6)                               # long before: coming in along dir_in
+        self.assertLess(math.acos(min(1, T._dot(T._unit(v), iso["dir_in"]))), 1e-6)
+        # Kepler's solution matches a step-by-step integration of the same orbit
+        r0, v0 = T.iso_state(iso, iso["t_peri"] - 400)
+        st = list(r0) + list(v0)
+        def deriv(s):
+            rr = math.sqrt(s[0] ** 2 + s[1] ** 2 + s[2] ** 2); k = -T.MU_SUN / rr ** 3
+            return [s[3], s[4], s[5], k * s[0], k * s[1], k * s[2]]
+        hstep = 0.05
+        for _ in range(16000):                                                     # 800 days
+            k1 = deriv(st); k2 = deriv([a + hstep / 2 * b for a, b in zip(st, k1)])
+            k3 = deriv([a + hstep / 2 * b for a, b in zip(st, k2)]); k4 = deriv([a + hstep * b for a, b in zip(st, k3)])
+            st = [a + hstep / 6 * (b + 2 * c + 2 * d + e) for a, b, c, d, e in zip(st, k1, k2, k3, k4)]
+        r1, _ = T.iso_state(iso, iso["t_peri"] + 400)
+        self.assertLess(max(abs(a - b) for a, b in zip(st[:3], r1)) * T.AU_KM, 1.0)   # under 1 km after 800 days
+
+    def test_intercept_mission(self):
+        h = next(x for x in self._hashes() if T.problem(x)["type"] == "intercept")
+        p = T.problem(h)
+        self.assertEqual(p["target"], T.ISO)
+        self.assertEqual(p["window_start"], p["iso"]["discovery_day"] + T.INTERCEPT_LAUNCH_AFTER)
+        b = T.baseline(h)
+        self.assertEqual(b["seq"], [T.EARTH, T.ISO])
+        ev = T.evaluate(b["seq"], b["days"], p["time_penalty_mps_per_year"], p)
+        # the encounter speed counts at a tenth: a flyby, not a rendezvous
+        self.assertAlmostEqual(ev["dv_kms"], ev["launch_kms"] + T.INTERCEPT_ARRIVAL_WEIGHT * ev["arrival_kms"], delta=1e-12)
+        sc = ch.score_trajectory(h, b["seq"], b["days"])
+        self.assertEqual(sc["cost"], sc["baseline"])
+        with self.assertRaises(ch.ValidationError):                                # must end at the object
+            ch.score_trajectory(h, [T.EARTH, 4], b["days"])
+        r = plan(p, seconds=2, seed=1, start=b)
+        self.assertLessEqual(ch.score_trajectory(h, r["seq"], r["days"])["cost"], sc["baseline"])
+
+    def test_heliopause_mission(self):
+        import math
+        h = next(x for x in self._hashes() if T.problem(x)["type"] == "heliopause")
+        p = T.problem(h)
+        self.assertEqual(p["goal_au"], 120)
+        nose = p["target_star"]["dir"]
+        self.assertAlmostEqual(math.degrees(math.atan2(nose[1], nose[0])) % 360, 255.7, delta=1e-9)
+        self.assertAlmostEqual(math.degrees(math.asin(nose[2])), 5.1, delta=1e-9)
+        b = T.baseline(h)
+        sc = ch.score_trajectory(h, b["seq"], b["days"], b["escape"])
+        # the same departure scored to 550 AU takes longer than to 120 AU
+        far = dict(p, goal_au=550)
+        self.assertGreater(T.escape_evaluate(far, b["seq"], b["days"], b["escape"])["cost"], sc["eval"]["cost"])
+        # a heliopause run isn't a scout for Pulsarite (it isn't aimed at a star)
+        tr = trajectory_for(h)
+        self.assertIn("escape", tr)
 
 if __name__ == "__main__":
     unittest.main()

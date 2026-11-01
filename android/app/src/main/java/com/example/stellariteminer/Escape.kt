@@ -68,6 +68,15 @@ class EscapeMission(m: JSONObject) {
                 .put("star_catalog_id", rules.getString("star_catalog_id"))
         }
 
+        /** A heliopause run, as trajectory.heliopause_problem: an escape aimed at the heliosphere's nose,
+         *  scored on reaching 120 AU. */
+        fun buildHeliopause(prevHash: String, start: Int, rules: JSONObject): JSONObject {
+            val h = rules.getJSONObject("heliopause")
+            return build(prevHash, start, rules).put("type", "heliopause").put("goal_au", h.getInt("goal_au"))
+                .put("target_star", JSONObject().put("id", -1).put("name", "Heliosphere nose").put("planets", 0)
+                    .put("distance_ly", 0.0).put("dir", h.getJSONArray("dir")))
+        }
+
         fun hashInt(prevHash: String, tag: String): java.math.BigInteger =
             java.math.BigInteger(1, java.security.MessageDigest.getInstance("SHA-256").digest(bytesOfHex(prevHash) + tag.toByteArray()))
     }

@@ -45,4 +45,4 @@ BONUS_RATIO_CAP_NUM, BONUS_RATIO_CAP_DEN = 8, 5
 COST_TOLERANCE_MPS = 1
 
 GENESIS_TIMESTAMP = 1_790_812_800  # 2026-10-01 00:00 UTC
-GENESIS_MESSAGE = "Nebulite genesis v4 - escape missions toward Pulsarite stars"
+GENESIS_MESSAGE = "Nebulite genesis v5 - heliopause runs and interstellar-object intercepts"

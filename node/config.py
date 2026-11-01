@@ -58,7 +58,7 @@ EXHAUST_PCT_C = 10                  # exhaust speed (advanced fusion), for the m
 LAUNCH_YEAR = 2100
 
 GENESIS_TIMESTAMP = 1_790_812_800  # 2026-10-01 00:00 UTC
-GENESIS_MESSAGE = "Pulsarite genesis v6 - Nebulite scouts guide the routes"
+GENESIS_MESSAGE = "Pulsarite genesis v8 - scouts checked with powered flybys"
 
 # Scouts: a block may cite Nebulite escape missions aimed at its survey stars (see scouts.py).
 # A scouted stop no longer needs a stop: the probe flies past at speed.
@@ -68,3 +68,7 @@ SCOUT_MIN_WORK_DIVISOR = 3          # a scout must carry at least 1/3 of the wor
 # at most 1.02^12 = 1.27x easier, which saves at most 21% of a block's hashing. A scout must itself carry
 # at least 1/3 (33%) of the hashing the citing block needs, so forging one always costs more than it saves.
 SCOUT_TIME_CAP_NUM, SCOUT_TIME_CAP_DEN = 51, 50
+# Each cited scout earns its Nebulite miner this share of the block reward, newly minted and paid to
+# the same wallet's Pulsarite address. Even a forger citing their own fake scout gains less (5% of a
+# reward plus at most 21% less hashing) than the third of a block's work the scout must carry.
+SCOUT_REWARD_PCT = 5

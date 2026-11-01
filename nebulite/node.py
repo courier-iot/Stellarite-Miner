@@ -16,7 +16,7 @@ from flask import Flask, jsonify, request
 import config as C
 import trajectory as T
 from chain import (Blockchain, ValidationError, block_hash, effective_target, header_prefix,
-                   next_target, score_trajectory, tx_sender, work)
+                   next_target, score_trajectory, tx_sender, txid, work)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024   # room for imported chains
@@ -244,9 +244,9 @@ def mining_work():
         "job_id": job_id,
         "height": template["height"],
         "mission": prob,
-        "mission_about": T.ESCAPE_ABOUT if prob["type"] == "escape" else T.MISSION_TYPES[prob["type"]]["about"],
+        "mission_about": T.mission_about(prob),
         "baseline": {"seq": base["seq"], "days": base["days"], "cost": round(base["cost"]),
-                     **({"escape": base["escape"]} if prob["type"] == "escape" else {})},
+                     **({"escape": base["escape"]} if T.is_escape(prob) else {})},
         "planets": T.planets_json(),
         "physics": T.physics_json(),
         "base_target": template["target"],
@@ -291,6 +291,10 @@ def mining_trajectory():
             "years_to_star": round(ev["years_to_star"]),
             "launch_date": T.date_of(days[0]), "arrival_date": T.date_of(days[0] + ev["cost"]),
         })
+    extra = {}
+    if T.problem(block["prev_hash"])["type"] == "intercept":       # a flyby: report the encounter speed
+        extra = {"encounter_kms": round(ev["arrival_kms"], 3),
+                 "dv_kms": round(ev["launch_kms"] + sum(ev["flyby_kms"]), 3)}
     return jsonify({
         "prefix": header_prefix(block).hex(),
         "target": format(target, "064x"),
@@ -300,6 +304,7 @@ def mining_trajectory():
         "launch_kms": round(ev["launch_kms"], 3), "arrival_kms": round(ev["arrival_kms"], 3),
         "flyby_kms": [round(x, 3) for x in ev["flyby_kms"]],
         "launch_date": T.date_of(body.get("days")[0]), "arrival_date": T.date_of(body.get("days")[-1]),
+        **extra,
     })
 
 
@@ -359,7 +364,7 @@ def map_data():
             ref = rows[0]["days"][0] if rows else T.WINDOW_START_MIN
             blocks = {b["height"]: b for b in chain.blocks[-limit - 1:]}
             for r in rows:
-                if r["mission_type"] == "escape":
+                if r["mission_type"] in ("escape", "heliopause"):
                     prob = T.problem(blocks[r["height"]]["prev_hash"])
                     r["points"] = T.escape_path(prob, r["seq"], r["days"], r["escape"])
                     r["star_dir"] = prob["target_star"]["dir"]
@@ -368,9 +373,12 @@ def map_data():
                     if r["encounters"][-1]["planet"] == "Sun":     # perihelion point: the path's closest approach
                         r["encounters"][-1]["p"] = min(r["points"], key=lambda q: q[0] ** 2 + q[1] ** 2 + q[2] ** 2)
                     continue
-                r["points"] = T.sample_path(r["seq"], r["days"])
+                prob = T.problem(blocks[r["height"]]["prev_hash"])
+                r["points"] = T.sample_path(r["seq"], r["days"], prob=prob)
                 for enc, p, d in zip(r["encounters"], r["seq"], r["days"]):
-                    enc["p"] = list(T.planet_state(p, d)[0])
+                    enc["p"] = list(T.body_state(prob, p, d)[0])
+                if prob["type"] == "intercept":
+                    r["iso_points"] = T.iso_path(prob)
             _map_cache.clear()
             _map_cache[key] = {
                 "coin": C.COIN_NAME, "ticker": C.TICKER, "height": len(chain.blocks) - 1,
@@ -390,13 +398,15 @@ def scouts():
     with lock:
         for b in reversed(chain.blocks[1:]):
             tr = b.get("trajectory") or {}
-            if "escape" not in tr:
+            if "escape" not in tr or T.problem(b["prev_hash"])["type"] != "escape":   # heliopause runs aren't scouts
                 continue
             star = T.problem(b["prev_hash"])["target_star"]
             if want and star["id"] not in want:
                 continue
-            out.append({"star": star["id"], "star_name": star["name"], "proof": {
-                k: b[k] for k in ("height", "prev_hash", "timestamp", "target", "tx_root", "trajectory", "nonce")}})
+            proof = {k: b[k] for k in ("height", "prev_hash", "timestamp", "target", "tx_root", "trajectory", "nonce")}
+            proof["coinbase"] = b["txs"][0]                     # who mined it (the scout's reward goes there)
+            proof["txids"] = [txid(t) for t in b["txs"]]        # reproduce tx_root, proving the coinbase
+            out.append({"star": star["id"], "star_name": star["name"], "miner": b["txs"][0]["to"], "proof": proof})
             if len(out) >= limit:
                 break
     return jsonify(out)

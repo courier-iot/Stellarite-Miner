@@ -125,20 +125,21 @@ def score_trajectory(prev_hash: str, seq, days, escape=None) -> dict:
     Raises ValidationError if the trajectory breaks the mission rules or is impossible.
     """
     prob = T.problem(prev_hash)
-    if prob["type"] == "escape":
+    if T.is_escape(prob):
         err = T.escape_check(prob, seq, days, escape)
         if err:
             raise ValidationError(err)
         ev = T.escape_evaluate(prob, seq, days, escape)
         if ev is None:
             raise ValidationError("escape trajectory is not possible within the launch and fuel limits")
+        # (heliopause missions score days to 120 AU; escapes toward a star, days to 550 AU)
         return {"cost": round(ev["cost"]), "baseline": round(T.escape_baseline(prev_hash)["cost"]), "eval": ev}
     if escape is not None:
         raise ValidationError("this block's mission isn't an escape mission")
     err = T.check(prob, seq, days)
     if err:
         raise ValidationError(err)
-    ev = T.evaluate(seq, days, prob["time_penalty_mps_per_year"])
+    ev = T.evaluate(seq, days, prob["time_penalty_mps_per_year"], prob)
     if ev is None:
         raise ValidationError("trajectory is not physically possible")
     return {"cost": round(ev["cost"]), "baseline": round(T.baseline(prev_hash)["cost"]), "eval": ev}
@@ -487,8 +488,9 @@ class Blockchain:
         return {
             "height": b["height"], "miner": b["txs"][0]["to"], "timestamp": b["timestamp"],
             "miner_name": self.state.name_of.get(b["txs"][0]["to"]),
-            "mission_type": "escape", "target_star": star["name"], "target_star_id": star["id"], "star_dir": star["dir"],
-            "path": [T.body_name(p) for p in tr["seq"]] + ["550 AU"], "seq": tr["seq"], "days": tr["days"],
+            "mission_type": prob["type"], "target_star": star["name"], "target_star_id": star["id"], "star_dir": star["dir"],
+            "goal_au": prob["goal_au"],
+            "path": [T.body_name(p) for p in tr["seq"]] + [f"{prob['goal_au']} AU"], "seq": tr["seq"], "days": tr["days"],
             "escape": tr["escape"],
             "dv_kms": round(ev["launch_kms"] + ev["burns_total_kms"], 3), "launch_kms": round(ev["launch_kms"], 3),
             "burns_kms": round(ev["burns_total_kms"], 3),
@@ -497,7 +499,7 @@ class Blockchain:
             "cost": tr["cost"], "baseline": tr["baseline"],
             "improvement_pct": round(100 * (1 - tr["cost"] / tr["baseline"]), 2),
             "launch_date": T.date_of(tr["days"][0]),
-            "arrival_date": T.date_of(tr["days"][0] + ev["cost"]),      # passing 550 AU
+            "arrival_date": T.date_of(tr["days"][0] + ev["cost"]),      # passing 550 AU (120 AU for heliopause)
             "encounters": enc,
         }
 
@@ -507,19 +509,26 @@ class Blockchain:
         for b in reversed(self.blocks[1:][-limit:]):
             tr = b["trajectory"]
             prob = T.problem(b["prev_hash"])
-            if prob["type"] == "escape":
+            if T.is_escape(prob):
                 out.append(self._escape_row(b, tr, prob))
                 continue
-            ev = T.evaluate(tr["seq"], tr["days"], prob["time_penalty_mps_per_year"])
-            out.append({
+            ev = T.evaluate(tr["seq"], tr["days"], prob["time_penalty_mps_per_year"], prob)
+            row = {
                 "height": b["height"], "miner": b["txs"][0]["to"], "timestamp": b["timestamp"],
                 "miner_name": self.state.name_of.get(b["txs"][0]["to"]),
-                "path": [T.PLANETS[p][0] for p in tr["seq"]], "seq": tr["seq"], "days": tr["days"],
+                "path": [T.body_name(p) for p in tr["seq"]], "seq": tr["seq"], "days": tr["days"],
                 "dv_kms": round(ev["dv_kms"], 3), "years": round(ev["years"], 2),
                 "cost": tr["cost"], "baseline": tr["baseline"],
                 "improvement_pct": round(100 * (1 - tr["cost"] / tr["baseline"]), 2),
                 "mission_type": prob["type"],
                 "launch_date": T.date_of(tr["days"][0]), "arrival_date": T.date_of(tr["days"][-1]),
-                "encounters": [{"planet": T.PLANETS[p][0], "date": T.date_of(d)} for p, d in zip(tr["seq"], tr["days"])],
-            })
+                "encounters": [{"planet": T.body_name(p), "date": T.date_of(d)} for p, d in zip(tr["seq"], tr["days"])],
+            }
+            if prob["type"] == "intercept":
+                iso = prob["iso"]
+                row.update(iso=iso, encounter_kms=round(ev["arrival_kms"], 3), iso_vinf_kms=round(iso["vinf_kms"], 3),
+                           iso_q_au=round(iso["q_au"], 4), iso_perihelion_date=T.date_of(iso["t_peri"]),
+                           iso_discovery_date=T.date_of(iso["discovery_day"]),
+                           dv_kms=round(ev["launch_kms"] + sum(ev["flyby_kms"]), 3))
+            out.append(row)
         return out

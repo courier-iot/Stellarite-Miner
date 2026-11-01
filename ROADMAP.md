@@ -51,14 +51,18 @@ Today: planets from the full VSOP87A theory (about 1″, valid for millennia); L
 
 ## Nebulite × Pulsarite: interstellar departures
 
-- [x] **Escape missions** (about 1 Nebulite block in 5): leave the solar system aimed exactly at a Pulsarite star, scored by years to 550 AU; flybys, optional Sun dives, realistic launch and fuel limits; always solvable.
+- [x] **Escape missions** (2 Nebulite blocks in 8): leave the solar system aimed exactly at a Pulsarite star, scored by years to 550 AU; flybys, optional Sun dives, realistic launch and fuel limits; always solvable.
 - [x] **Scouts:** Pulsarite blocks cite Nebulite escapes aimed at their survey stars (a proof carried in the block, checked independently); a scouted stop becomes a flyby. Anti-forgery work rule, one citation per scout, capped hashing benefit.
   - [x] Scouts in solo mode (cite blocks from the phone's own Nebulite solo chain).
-  - [ ] Credit the scout's Nebulite miner on the Pulsarite chain (same key, `plsr…` address).
+  - [x] Credit the scout's Nebulite miner on the Pulsarite chain (5% of the block reward, same key's `plsr…` address).
 - [ ] ~~Literal hand-off~~: starting Pulsarite probes at 550 AU with Nebulite's speed changes mission times by days, so scouts replaced it.
-- [ ] **Interstellar-object intercepts:** missions to catch objects passing through from other stars (like 'Oumuamua), with short-notice launch windows.
-- [ ] **Precursor targets:** the heliopause (about 120 AU) and the Sun's gravitational lens focal line toward a target star, as mission goals of their own.
-- [ ] **Powered Jupiter flybys:** a burn at Jupiter closest approach (the "Jupiter Oberth" option the Interstellar Probe study preferred).
+- [x] **Interstellar-object intercepts** (1 block in 8): catch an object passing through from another star, drawn within the range of 'Oumuamua, Borisov and 3I/ATLAS; launch within two years of discovery; scored as a flyby (encounter speed at a tenth).
+  - [ ] Rendezvous and sample-return variants (match the object's speed), and objects drawn from the measured population model instead of a uniform range.
+  - [ ] Pre-positioned "waiting" probes (Comet Interceptor style) parked at L2 until a target is found.
+- [x] **Heliopause runs** (1 block in 8): reach 120 AU toward the heliosphere's nose (IBEX direction), the Interstellar Probe precursor goal.
+  - [ ] The solar gravitational lens focal line itself (550–1,000 AU behind the Sun from the target star) as a separate goal, with the craft slowing to station-keep.
+- [x] **Powered flybys** at every planet: a burn at closest approach, with the periapsis chosen to give the needed bend (the "Jupiter Oberth" manoeuvre).
+  - [ ] Score each flyby's real periapsis altitude against per-planet radiation and atmosphere limits.
 
 ## Both coins
 

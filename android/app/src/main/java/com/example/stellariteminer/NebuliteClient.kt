@@ -33,12 +33,15 @@ class NebuliteClient(baseUrl: String, private val address: String, private val n
 
         // 1. Useful work: plan this block's mission.
         val key = work.getJSONObject("mission").toString()
-        if (work.getJSONObject("mission").optString("type") == "escape") return escapeWork(work, jobId, key)
+        val type = work.getJSONObject("mission").optString("type")
+        if (type == "escape" || type == "heliopause") return escapeWork(work, jobId, key)
         val fresh = key != missionKey || optimizer == null
         if (fresh) {
             val m = TrajectoryModel(work)
             model = m
-            optimizer = TrajectoryOptimizer(m)
+            val b = work.getJSONObject("baseline")
+            optimizer = TrajectoryOptimizer(m, IntArray(b.getJSONArray("seq").length()) { b.getJSONArray("seq").getInt(it) } to
+                IntArray(b.getJSONArray("days").length()) { b.getJSONArray("days").getInt(it) })
             missionKey = key
         }
         val opt = optimizer!!
@@ -65,7 +68,8 @@ class NebuliteClient(baseUrl: String, private val address: String, private val n
             unitsPerCoin = work.getLong("units_per_coin"),
             work = TrajectoryInfo(seq.toList(), days.toList(), model!!.pathName(seq),
                 scored.getDouble("dv_kms"), scored.getDouble("years"), scored.getDouble("improvement_pct"),
-                work.getJSONObject("mission").optString("type", "science")),
+                work.getJSONObject("mission").optString("type", "science"),
+                encounterKms = scored.optDouble("encounter_kms", 0.0), iso = work.getJSONObject("mission").optJSONObject("iso")),
         )
     }
 
@@ -95,7 +99,7 @@ class NebuliteClient(baseUrl: String, private val address: String, private val n
             rewardUnits = work.getLong("reward"), unitsPerCoin = work.getLong("units_per_coin"),
             work = TrajectoryInfo(plan.seq.toList(), plan.days.toList(), model!!.pathName(plan.seq),
                 scored.getDouble("dv_kms"), scored.getDouble("years"), scored.getDouble("improvement_pct"),
-                "escape", plan.escapeJson(), model!!.escape!!.starName, scored.getDouble("vinf_kms")),
+                model!!.missionType, plan.escapeJson(), model!!.escape!!.starName, scored.getDouble("vinf_kms")),
         )
     }
 

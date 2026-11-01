@@ -77,9 +77,20 @@ Escape missions add hyperbolic departures, Sun dives and timing to 550 AU. Each 
 
 The remaining approximation is the same as for planet missions: patched conics. The planets' pull after the last flyby is ignored, and so is the slow outward drift of the Sun's own position around the solar system's centre of mass.
 
+## Powered flybys, heliopause runs and interstellar objects (12.0.0)
+
+- **Powered flybys.** The incoming and outgoing hyperbolas share one periapsis, found by 60 steps of geometric bisection so that their two half-turns add up to the bend needed; the burn is the difference of the two periapsis speeds. Tests check the bend to 1e-9 radians and that the burn is never more than an unpowered flyby plus a burn far from the planet. Phone and node agree on 300 random flybys to 7e-15 km/s.
+- **Interstellar objects.** Positions and velocities come from an exact Kepler hyperbola (30 Newton steps). At perihelion the distance matches the drawn value to 1e-12 AU; the orbital energy gives the drawn speed to 1e-9 km/s; long before perihelion the object travels along its drawn direction to better than 1e-6 radians; and a step-by-step integration over 800 days agrees to under 1 km. Phone and node agree to 4e-14 AU.
+- **Heliopause runs** use the escape physics above with a 120 AU goal; the heliosphere's nose direction is from IBEX (McComas et al. 2015).
+- **Phone vs node:** across 160 blocks they draw identical missions and baselines (to 8e-11), and agree on the feasibility and cost of 276 random plans to 1e-8 m/s.
+
+The model still treats each object as a point on a two-body orbit: the planets' pull on the object, and its outgassing (which nudged 'Oumuamua measurably), are ignored. For a real intercept the object's orbit would come from observations with its own uncertainty, typically thousands of km soon after discovery.
+
 ## References
 
 - P. Bretagnon and G. Francou, *Planetary theories in rectangular and spherical variables: VSOP87 solutions*, Astronomy and Astrophysics 202, 309–315 (1988).
 - VSOP87 coefficients: transcription in [gmiller123456/vsop87-multilang](https://github.com/gmiller123456/vsop87-multilang) (public domain), verified against the authors' `vsop87.chk`.
 - R. S. Park et al., *The JPL Planetary and Lunar Ephemerides DE440 and DE441*, The Astronomical Journal 161:105 (2021), for the masses (GM).
+- D. J. McComas et al., *Local interstellar medium: six years of direct sampling by IBEX*, Astrophysical Journal Supplement 220:22 (2015), for the heliosphere's nose direction.
+- R. L. McNutt Jr. et al., *Interstellar Probe: Humanity's exploration of the galaxy begins*, Acta Astronautica 196 (2022), for the launch limits, heliopause goal and Jupiter Oberth flybys.
 - E. M. Standish, *Keplerian Elements for Approximate Positions of the Major Planets* (JPL), the old model.

@@ -333,6 +333,9 @@ class MapPage(
     private var focusSeq: IntArray? = null
     private var focusDays: IntArray? = null
     private var focusName = ""
+    private var focusIso: IsoOrbit? = null       // intercepts: the interstellar object being chased
+
+    private fun isoOf(o: JSONObject?, m: TrajectoryModel) = o?.let { IsoOrbit(it, m.muSun, 30) }
 
     /** Compress distances (r -> sqrt(r)) so inner planets stay visible next to Neptune. */
     private fun squash(p: DoubleArray): DoubleArray {
@@ -348,6 +351,7 @@ class MapPage(
     private val escRules by lazy { JSONObject(SoloData.NEBULITE_MISSION_RULES_JSON) }
 
     private fun starDir(name: String): DoubleArray? {
+        if (name == "Heliosphere nose") return escRules.getJSONObject("heliopause").getJSONArray("dir").let { d -> DoubleArray(3) { d.getDouble(it) } }
         val a = escRules.getJSONArray("star_targets")
         for (i in 0 until a.length()) {
             val st = a.getJSONObject(i)
@@ -379,8 +383,9 @@ class MapPage(
         val live = MinerService.status.work as? TrajectoryInfo
         val ms = missions ?: JSONArray()
         val newest = if (ms.length() > 0) ms.getJSONObject(0) else null
-        focusStar = ""; focusStarTip = null
+        focusStar = ""; focusStarTip = null; focusIso = null
         if (live != null) {
+            focusIso = isoOf(live.iso, m)
             focusSeq = live.seq.filter { it != TrajectoryModel.SUN }.toIntArray(); focusDays = live.days.toIntArray()
             focusName = "LIVE PLAN ${live.path}"
             if (live.escape != null) focusStar = live.starName
@@ -389,7 +394,8 @@ class MapPage(
             focusSeq = IntArray(s.length()) { s.getInt(it) }.filter { it != TrajectoryModel.SUN }.toIntArray()
             focusDays = IntArray(d.length()) { d.getInt(it) }
             focusName = "BLOCK ${newest.getInt("height")} MISSION"
-            if (newest.optString("mission_type") == "escape") focusStar = newest.optString("target_star")
+            if (newest.optString("mission_type") in setOf("escape", "heliopause")) focusStar = newest.optString("target_star")
+            focusIso = isoOf(newest.optJSONObject("iso"), m)
         } else { focusSeq = null; focusDays = null }
 
         val today = System.currentTimeMillis() / 86_400_000.0 - 10957.5     // days since J2000
@@ -402,7 +408,14 @@ class MapPage(
             val days = o.getJSONArray("days")
             val sq = IntArray(seq.length()) { seq.getInt(it) }; val dy = IntArray(days.length()) { days.getInt(it) }
             val width = if (i == 0) 1.6f else 1f; val alpha = if (i == 0) 170 else 60
-            if (o.optString("mission_type") == "escape") {
+            if (o.optString("mission_type") == "intercept") {
+                val iso = isoOf(o.optJSONObject("iso"), m) ?: continue
+                m.extraIso = iso
+                lines += MapLine(iso.path().map { squash(it) }, Theme.CRIMSON_LIGHT, 0.8f, alpha / 2)
+                lines += MapLine(m.samplePath(sq, dy, 40).map { squash(it) }, Theme.CRIMSON, width, alpha)
+                continue
+            }
+            if (o.optString("mission_type") in setOf("escape", "heliopause")) {
                 val dir = o.optJSONArray("star_dir")?.let { d -> DoubleArray(3) { d.getDouble(it) } } ?: starDir(o.optString("target_star"))
                 val el = if (dir != null && o.optJSONObject("escape") != null) escapeLines(m, sq, dy, o.getJSONObject("escape"), dir) else null
                 if (el != null) {
@@ -414,6 +427,8 @@ class MapPage(
             }
             lines += MapLine(m.samplePath(sq, dy, 40).map { squash(it) }, Theme.CRIMSON, width, alpha)
         }
+        m.extraIso = focusIso
+        focusIso?.let { lines += MapLine(it.path().map { p -> squash(p) }, Theme.CRIMSON_LIGHT, 1.2f, 200) }
         if (live != null) {
             val dir = if (live.escape != null) starDir(live.starName) else null
             val el = if (dir != null) escapeLines(m, live.seq.toIntArray(), live.days.toIntArray(), live.escape!!, dir) else null
@@ -445,6 +460,10 @@ class MapPage(
                 "science" -> append("\n> SCIENCE: FUEL AND TIME BOTH MATTER (250 M/S PER YEAR)")
                 "escape" -> append("\n> ESCAPE: LEAVE THE SOLAR SYSTEM AIMED AT ${focusStar.uppercase(Locale.US)}; " +
                     "SCORED ON YEARS TO 550 AU. PULSARITE PLANS THE REST")
+                "heliopause" -> append("\n> HELIOPAUSE RUN: REACH THE EDGE OF THE SUN'S BUBBLE, 120 AU TOWARD THE " +
+                    "INTERSTELLAR WIND (LIKE THE VOYAGERS, BUT FASTER)")
+                "intercept" -> append("\n> INTERCEPT: CATCH A VISITOR FROM ANOTHER STAR (PINK LINE) BEFORE IT LEAVES; " +
+                    "A FLYBY, SO THE MEETING SPEED COUNTS ONLY A TENTH")
             }
             append(if (focusSeq != null) "\n> SLIDE TO FLY THE $focusName · TAP A PLANET FOR DETAILS"
                 else "\n> TAP A PLANET FOR DETAILS · DRAG TO ROTATE · PINCH TO ZOOM")
@@ -477,7 +496,7 @@ class MapPage(
             for (k in seq.indices) {
                 val p = squash(m.state(seq[k], days[k].toDouble()))
                 val what = when { k == 0 -> "LAUNCH"; k == seq.size - 1 && focusStar.isEmpty() -> "ARRIVE"; else -> "FLYBY" }
-                val name = m.planets[seq[k]].name.uppercase(Locale.US)
+                val name = if (seq[k] == TrajectoryModel.ISO) "INTERSTELLAR OBJECT" else m.planets[seq[k]].name.uppercase(Locale.US)
                 points += MapPoint(p[0], p[1], p[2], if (days[k] <= day) Theme.AMBER else Theme.CRIMSON_LIGHT, 3f,
                     "$what $name ${TrajectoryModel.dateOf(days[k]).take(4)}", alwaysLabel = true, glow = true,
                     info = "$what: $name\n${dateText(days[k].toDouble())} (mission day ${days[k] - days.first()})", key = "enc$k")
@@ -490,10 +509,22 @@ class MapPage(
                         dateText(day), r, (day - days.first()).toInt(), days.last() - days.first()), key = "craft")
             }
         }
+        focusIso?.let { iso ->
+            val st = iso.state(day)
+            val p = squash(st)
+            val r = sqrt(st[0] * st[0] + st[1] * st[1] + st[2] * st[2])
+            points += MapPoint(p[0], p[1], p[2], Theme.CRIMSON_LIGHT, 3f, "INTERSTELLAR OBJECT", alwaysLabel = true, glow = true,
+                info = String.format(Locale.US, "INTERSTELLAR OBJECT\n%.2f AU from the Sun on %s\nClosest to the Sun: %.2f AU on %s" +
+                    "\nSpeed far from the Sun: %.1f km/s (on its way out of the solar system for good)",
+                    r, dateText(day), iso.q, TrajectoryModel.dateOf(iso.tPeri), iso.vinfKms), key = "iso")
+        }
         focusStarTip?.let { tip ->
             val p = squash(tip)
             points += MapPoint(p[0], p[1], p[2], Theme.AMBER, 3f, "→ " + focusStar.uppercase(Locale.US), alwaysLabel = true, glow = true,
-                info = "${focusStar.uppercase(Locale.US)}\nThis escape leaves the solar system aimed straight at this Pulsarite star." +
+                info = if (focusStar == "Heliosphere nose")
+                    "HELIOSPHERE NOSE\nWhere the interstellar wind blows in from (IBEX). The heliopause, the edge of the Sun's " +
+                        "bubble of solar wind, lies about 120 AU out this way; both Voyagers crossed it near there."
+                else "${focusStar.uppercase(Locale.US)}\nThis escape leaves the solar system aimed straight at this Pulsarite star." +
                     "\nPulsarite plans the journey between the stars from 550 AU on.", key = "star")
         }
         view.setScene(points, staticLines, emptyList(), "")

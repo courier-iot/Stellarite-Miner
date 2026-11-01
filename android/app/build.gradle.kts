@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.stellariteminer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 100100
-        versionName = "10.1.0"
+        versionCode = 120000
+        versionName = "12.0.0"
     }
 
     buildTypes {

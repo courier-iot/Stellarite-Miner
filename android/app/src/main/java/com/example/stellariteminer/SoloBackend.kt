@@ -36,7 +36,7 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
     }
 
     private fun buildWork(): Job {
-        val t = chain.template(address, name)
+        var t = chain.template(address, name)
         val fresh = t.prev != problemKey
         if (fresh) weakScouts.clear()
         problemKey = t.prev
@@ -46,6 +46,7 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
             is TrajectoryRules -> trajectoryWork(u, t, fresh, budget)
             else -> error("unknown useful work")
         }
+        if (chain.useful is StarRouteRules) t = chain.withScouts(t, scouts)    // cite the scouts and pay their miners
         val (prefix, target) = chain.prepare(t, value)
         return Job(
             id = "solo-${t.height}", height = t.height, prefix = prefix,
@@ -67,7 +68,6 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
             routeField = f
             routePlanner = MovingRoutePlanner(f)
         }
-        t.scouts = scouts
         val f = routeField!!
         val opt = routePlanner!!
         opt.improve(ms)
@@ -85,7 +85,7 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
 
     private fun trajectoryWork(u: TrajectoryRules, t: SoloChain.Template, fresh: Boolean, ms: Long): Pair<Any, UsefulWork> {
         val mission = u.mission(t.prev)
-        if (mission.optString("type") == "escape") {
+        if (mission.optString("type") == "escape" || mission.optString("type") == "heliopause") {
             if (fresh || escOpt == null) {
                 trajModel = u.model(t.prev)
                 escOpt = EscapeOptimizer(Escape(trajModel!!, trajModel!!.escape!!), u.escapeBaseline(t.prev).first)
@@ -98,11 +98,11 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
             val ev = Escape(m, m.escape!!).evaluate(plan)!!
             val gain = Math.round(10000.0 * (1 - value.getLong("cost").toDouble() / value.getLong("baseline"))) / 100.0
             return value to TrajectoryInfo(plan.seq.toList(), plan.days.toList(), m.pathName(plan.seq),
-                ev.launchKms + ev.burnsKms, ev.years, gain, "escape", plan.escapeJson(), m.escape!!.starName, ev.vinfKms)
+                ev.launchKms + ev.burnsKms, ev.years, gain, m.missionType, plan.escapeJson(), m.escape!!.starName, ev.vinfKms)
         }
         if (fresh || trajOpt == null) {
             trajModel = u.model(t.prev)
-            trajOpt = TrajectoryOptimizer(trajModel!!)
+            trajOpt = TrajectoryOptimizer(trajModel!!, u.baseline(t.prev).second)
         }
         val m = trajModel!!
         val opt = trajOpt!!
@@ -111,6 +111,9 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
         val value = u.value(t.prev, seq, days)
         val ev = m.evaluate(seq, days)!!
         val gain = Math.round(10000.0 * (1 - value.getLong("cost").toDouble() / value.getLong("baseline"))) / 100.0
+        if (m.missionType == "intercept")      // a flyby: the burns, and the encounter speed on its own
+            return value to TrajectoryInfo(seq.toList(), days.toList(), m.pathName(seq), ev.launchKms + ev.flybyKms,
+                ev.years, gain, m.missionType, encounterKms = ev.arrivalKms, iso = mission.optJSONObject("iso"))
         return value to TrajectoryInfo(seq.toList(), days.toList(), m.pathName(seq), ev.dvKms, ev.years, gain, m.missionType)
     }
 
@@ -189,10 +192,11 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
                 if (em != null) {
                     val plan = EscapePlan.fromJson(seq, days, tr.getJSONObject("escape"))
                     val ev = Escape(m, em).evaluate(plan) ?: continue
-                    out.put(JSONObject().put("height", b.getLong("height")).put("mission_type", "escape")
+                    out.put(JSONObject().put("height", b.getLong("height")).put("mission_type", m.missionType)
+                        .put("goal_au", em.goalAu.toInt())
                         .put("target_star", em.starName).put("target_star_id", em.starId)
                         .put("star_dir", JSONArray(em.dir.toList()))
-                        .put("path", JSONArray(seq.map { if (it == TrajectoryModel.SUN) "Sun" else m.planets[it].name } + "550 AU"))
+                        .put("path", JSONArray(seq.map { if (it == TrajectoryModel.SUN) "Sun" else m.planets[it].name } + "${em.goalAu.toInt()} AU"))
                         .put("seq", JSONArray(seq.toList())).put("days", JSONArray(days.toList()))
                         .put("escape", tr.getJSONObject("escape"))
                         .put("dv_kms", ev.launchKms + ev.burnsKms).put("vinf_kms", ev.vinfKms).put("au_per_year", ev.auPerYear)
@@ -201,9 +205,17 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
                     continue
                 }
                 val ev = m.evaluate(seq, days) ?: continue
-                out.put(JSONObject().put("height", b.getLong("height"))
-                    .put("path", JSONArray(seq.map { m.planets[it].name })).put("seq", JSONArray(seq.toList()))
-                    .put("days", JSONArray(days.toList())).put("dv_kms", ev.dvKms).put("years", ev.years)
+                val row = JSONObject()
+                if (m.missionType == "intercept") {
+                    val iso = m.iso!!
+                    row.put("iso", u.mission(b.getString("prev_hash")).getJSONObject("iso")).put("encounter_kms", ev.arrivalKms).put("iso_vinf_kms", iso.vinfKms).put("iso_q_au", iso.q)
+                        .put("iso_perihelion_date", TrajectoryModel.dateOf(iso.tPeri))
+                }
+                out.put(row.put("height", b.getLong("height"))
+                    .put("path", JSONArray(seq.map { if (it == TrajectoryModel.ISO) "Interstellar object" else m.planets[it].name }))
+                    .put("seq", JSONArray(seq.toList()))
+                    .put("days", JSONArray(days.toList()))
+                    .put("dv_kms", if (m.missionType == "intercept") ev.launchKms + ev.flybyKms else ev.dvKms).put("years", ev.years)
                     .put("mission_type", m.missionType)
                     .put("launch_date", TrajectoryModel.dateOf(days.first())).put("arrival_date", TrajectoryModel.dateOf(days.last()))
                     .put("improvement_pct", Math.round(10000.0 * (1 - tr.getLong("cost").toDouble() / tr.getLong("baseline"))) / 100.0))

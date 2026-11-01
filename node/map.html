@@ -132,7 +132,7 @@ function draw() {
   if (!data) return;
   fitAu = 0;
   const selM = kind === "orbits" ? data.missions[selected] : null;
-  if (selM && selM.mission_type === "escape") fitAu = Math.max(...selM.points.map(q => Math.hypot(...q))) + ESC_POINTER_AU;
+  if (selM && (selM.mission_type === "escape" || selM.mission_type === "heliopause")) fitAu = Math.max(...selM.points.map(q => Math.hypot(...q))) + ESC_POINTER_AU;
   rings();
   if (kind === "stars") drawStars(); else drawOrbits();
 }
@@ -172,6 +172,7 @@ function drawOrbits() {
   data.orbits.forEach(o => polyline(o.points, COL.muted, 1, .45));
   const ms = data.missions, sel = ms[selected];
   ms.forEach((m, i) => { if (i !== selected) polyline(m.points, COL.crimson, 1, .35); });
+  if (sel && sel.iso_points) polyline(sel.iso_points, COL.crimsonLight, 1.2, .8);   // the interstellar object's path
   if (sel) polyline(sel.points, COL.amber, 2.2, 1);
   dot([0, 0, 0], COL.amber, 5, "SUN", true, `<span class="k">SUN</span>\nDistances are compressed (square root) so every orbit fits; directions are true.`);
   data.orbits.forEach(o => {
@@ -179,18 +180,23 @@ function drawOrbits() {
     dot(p, COL.text, 2.4, o.name.toUpperCase(), false,
       `<span class="k">${esc(o.name.toUpperCase())}</span>\n${fmt(Math.hypot(...p), 2)} AU from the Sun at the latest mission's launch`);
   });
-  if (sel && sel.mission_type === "escape" && sel.points.length) {
+  const heliopause = sel && sel.mission_type === "heliopause";
+  if (sel && (sel.mission_type === "escape" || heliopause) && sel.points.length) {
     // the star direction: a dashed pointer from the end of the drawn path
     const end = sel.points[sel.points.length - 1], d = sel.star_dir, L = ESC_POINTER_AU;
     const tip = [end[0] + d[0] * L, end[1] + d[1] * L, end[2] + d[2] * L];
     ctx.setLineDash([6, 6]); polyline([end, tip], COL.amber, 1.4, .8); ctx.setLineDash([]);
-    dot(tip, COL.amber, 3, "→ " + sel.target_star.toUpperCase(), true,
-      `<span class="k">${esc(sel.target_star.toUpperCase())}</span>\nThe escape aims straight at this Pulsarite star.\n` +
-      `${fmt(sel.au_per_year, 2)} AU per year: 550 AU in ${fmt(sel.years)} years, the star in about ${fmt(sel.years_to_star)} years.`);
+    dot(tip, COL.amber, 3, "→ " + sel.target_star.toUpperCase(), true, heliopause
+      ? `<span class="k">HELIOSPHERE NOSE</span>\nWhere the interstellar wind blows in from (IBEX). The heliopause, the edge of the ` +
+        `Sun's bubble, is about 120 AU out this way.\n${fmt(sel.au_per_year, 2)} AU per year: 120 AU in ${fmt(sel.years)} years ` +
+        `(Voyager 1 took 35).`
+      : `<span class="k">${esc(sel.target_star.toUpperCase())}</span>\nThe escape aims straight at this Pulsarite star.\n` +
+        `${fmt(sel.au_per_year, 2)} AU per year: 550 AU in ${fmt(sel.years)} years, the star in about ${fmt(sel.years_to_star)} years.`);
   }
   if (sel) sel.encounters.forEach((e, k) => {
     const last = k === sel.encounters.length - 1;
-    const what = e.planet === "Sun" ? "SUN DIVE" : k === 0 ? "LAUNCH" : last && sel.mission_type !== "escape" ? "ARRIVE" : "FLYBY";
+    const what = e.planet === "Sun" ? "SUN DIVE" : k === 0 ? "LAUNCH" : last && sel.mission_type === "intercept" ? "MEET"
+      : last && sel.mission_type !== "escape" && !heliopause ? "ARRIVE" : "FLYBY";
     dot(e.p, COL.amber, 3, `${what} ${e.planet.toUpperCase()} ${e.date.slice(0, 4)}`, true,
       `<span class="k">${what}: ${esc(e.planet.toUpperCase())}</span>\n${e.date}\nBlock ${sel.height} · ${sel.mission_type} mission`);
   });
@@ -206,6 +212,12 @@ function renderList() {
       ? `<span class="t">BLOCK ${r.height}</span>${by}<br>${fmt(r.years)} yr · ${fmt(r.length_ly)} ly · fuel ${fmt(r.fuel_used_pct)}%<br>` +
         `<span class="m">${fmt(r.improvement_pct, 1)}% faster than greedy · stops: ${esc(r.stops.join(", "))}` +
         (r.scouted && r.scouted.length ? ` · scouted by Nebulite: ${esc(r.scouted.join(", "))}` : "") + `</span>`
+      : r.mission_type === "heliopause"
+      ? `<span class="t">BLOCK ${r.height}</span> · heliopause run${by}<br>${esc(r.path.join("–"))}<br>` +
+        `<span class="m">${fmt(r.vinf_kms, 1)} km/s (${fmt(r.au_per_year, 2)} AU/yr) · 120 AU in ${fmt(r.years, 1)} yr, ${r.arrival_date.slice(0, 4)} · ${fmt(r.improvement_pct, 1)}% faster than baseline</span>`
+      : r.mission_type === "intercept"
+      ? `<span class="t">BLOCK ${r.height}</span> · interstellar-object intercept${by}<br>${esc(r.path.join("–"))}<br>` +
+        `<span class="m">${fmt(r.dv_kms, 2)} km/s · meets it at ${fmt(r.encounter_kms, 1)} km/s on ${r.arrival_date} · ${fmt(r.improvement_pct, 1)}% cheaper than direct</span>`
       : r.mission_type === "escape"
       ? `<span class="t">BLOCK ${r.height}</span> · escape → ${esc(r.target_star)}${by}<br>${esc(r.path.join("–"))}<br>` +
         `<span class="m">${fmt(r.vinf_kms, 1)} km/s (${fmt(r.au_per_year, 2)} AU/yr) · 550 AU in ${fmt(r.years)} yr, ${r.arrival_date.slice(0, 4)} · ${fmt(r.improvement_pct, 1)}% faster than baseline</span>`
@@ -222,6 +234,16 @@ function showSelected() {
   info.innerHTML = kind === "stars"
     ? `<span class="k">BLOCK ${r.height} ROUTE</span>\n${r.route.length} stars in ${fmt(r.years)} years (greedy: ${fmt(r.baseline_years)})\n` +
       `${fmt(r.length_ly)} ly flown · fuel ${fmt(r.fuel_used_pct)}% · mass ratio ${fmt(r.mass_ratio, 1)}\nSurvey stops: ${esc(r.stops.join(", "))}`
+    : r.mission_type === "heliopause"
+    ? `<span class="k">BLOCK ${r.height} · HELIOPAUSE RUN</span>\n${esc(r.path.join(" → "))}\n` +
+      `Launch ${r.launch_date} at ${fmt(r.launch_kms, 1)} km/s · ${fmt(r.burns_kms, 2)} km/s of burns\n` +
+      `Heads for the heliosphere's nose at ${fmt(r.vinf_kms, 1)} km/s (${fmt(r.au_per_year, 2)} AU/yr)\n` +
+      `Crosses 120 AU in ${r.arrival_date.slice(0, 4)} (${fmt(r.years, 1)} years)`
+    : r.mission_type === "intercept"
+    ? `<span class="k">BLOCK ${r.height} · INTERSTELLAR-OBJECT INTERCEPT</span>\n${esc(r.path.join(" → "))}\n` +
+      `Object found ${r.iso_discovery_date}: ${fmt(r.iso_vinf_kms, 1)} km/s from another star, closest to the Sun ` +
+      `(${fmt(r.iso_q_au, 2)} AU) on ${r.iso_perihelion_date}\n` +
+      `Launch ${r.launch_date} · ${fmt(r.dv_kms, 2)} km/s of burns · meets it ${r.arrival_date} at ${fmt(r.encounter_kms, 1)} km/s`
     : r.mission_type === "escape"
     ? `<span class="k">BLOCK ${r.height} · ESCAPE TOWARD ${esc(r.target_star.toUpperCase())}</span>\n${esc(r.path.join(" → "))}\n` +
       `Launch ${r.launch_date} at ${fmt(r.launch_kms, 1)} km/s · ${fmt(r.burns_kms, 2)} km/s of burns\n` +

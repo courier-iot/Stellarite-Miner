@@ -25,7 +25,7 @@ def sequences(prob, max_flybys=2):
 def _cost(prob, seq, days):
     if T.check(prob, seq, days):
         return float("inf")
-    ev = T.evaluate(seq, days, prob.get("time_penalty_mps_per_year", T.TIME_PENALTY_MPS_PER_YEAR))
+    ev = T.evaluate(seq, days, prob.get("time_penalty_mps_per_year", T.TIME_PENALTY_MPS_PER_YEAR), prob)
     return ev["cost"] if ev else float("inf")
 
 
@@ -59,12 +59,18 @@ def _pattern_search(prob, seq, days, cost, deadline):
     return days, cost
 
 
-def optimise(prob, seconds=3.0, max_flybys=2, seed=None):
-    """Return (seq, days, cost) of the best trajectory found within `seconds`."""
+def optimise(prob, seconds=3.0, max_flybys=2, seed=None, start=None):
+    """Return (seq, days, cost) of the best trajectory found within `seconds`. `start` (the block's
+    baseline {"seq", "days"}) is refined first, so the result is never worse than it."""
     rng = random.Random(seed)
     deadline = time.time() + seconds
     seqs = sequences(prob, max_flybys)
     best_per = {}
+    if start is not None:
+        c0 = _cost(prob, list(start["seq"]), list(start["days"]))
+        if c0 < float("inf"):
+            d0, c0 = _pattern_search(prob, list(start["seq"]), list(start["days"]), c0, time.time() + seconds / 4)
+            best_per[tuple(start["seq"])] = (d0, c0)
     rounds = 0
     while time.time() < deadline:
         # first two rounds try every sequence; afterwards focus on the best few
@@ -207,8 +213,8 @@ def optimise_escape(prob, seconds=3.0, max_flybys=2, seed=None, start=None):
 def plan(prob, seconds=3.0, max_flybys=2, seed=None, start=None):
     """Plan this block's mission, whatever its type: {"seq", "days"} plus "escape" for escape missions.
     `start` is the baseline plan from /mining/work (used by escape missions)."""
-    if prob["type"] == "escape":
+    if prob["type"] in ("escape", "heliopause"):
         r = optimise_escape(prob, seconds, max_flybys, seed, start)
         return None if r is None else {"seq": r[0], "days": r[1], "escape": r[2], "cost": r[3]}
-    seq, days, cost = optimise(prob, seconds, max_flybys, seed)
+    seq, days, cost = optimise(prob, seconds, max_flybys, seed, start)
     return {"seq": seq, "days": days, "cost": cost}

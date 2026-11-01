@@ -74,9 +74,14 @@ class SoloChain(private val file: File, val rules: CoinRules, val useful: Useful
 
     // ---- block format (identical to chain.py) -------------------------
 
-    private fun coinbaseJson(height: Long, to: String, amount: Long, name: String) =
-        if (name.isEmpty()) "{\"amount\":$amount,\"coinbase\":true,\"height\":$height,\"to\":\"$to\"}"
-        else "{\"amount\":$amount,\"coinbase\":true,\"height\":$height,\"name\":\"$name\",\"to\":\"$to\"}"
+    /** The coinbase in canonical JSON (keys sorted, as chain.py hashes it). [scouts] are paid their share. */
+    private fun coinbaseJson(height: Long, to: String, amount: Long, name: String, scouts: List<Scouts.Info> = emptyList()): String {
+        val nm = if (name.isEmpty()) "" else ",\"name\":\"$name\""
+        val share = reward(height) * Scouts.REWARD_PCT / 100
+        val rewards = if (scouts.isEmpty()) "" else
+            ",\"scout_rewards\":" + scouts.joinToString(",", "[", "]") { "{\"amount\":$share,\"to\":\"${it.rewardTo}\"}" }
+        return "{\"amount\":$amount,\"coinbase\":true,\"height\":$height$nm$rewards,\"to\":\"$to\"}"
+    }
 
     private fun genesisCoinbaseJson() =
         "{\"amount\":0,\"coinbase\":true,\"height\":0,\"memo\":${pyQuote(rules.genesisMessage)},\"to\":\"genesis\"}"
@@ -144,7 +149,8 @@ class SoloChain(private val file: File, val rules: CoinRules, val useful: Useful
 
     /** Everything needed to mine the next block, except the useful work and the nonce. */
     class Template(val height: Long, val prev: String, val timestamp: Long, val target: String,
-                   val coinbase: String, val txRoot: String, val reward: Long) {
+                   val coinbase: String, val txRoot: String, val reward: Long,
+                   val miner: String = "", val name: String = "") {
         /** Nebulite scouts cited by this block (Pulsarite solo chains; see Scouts.kt). */
         var scouts: List<Scouts.Info> = emptyList()
     }
@@ -173,7 +179,15 @@ class SoloChain(private val file: File, val rules: CoinRules, val useful: Useful
         if (n.isNotEmpty() && nameOwners()[n].let { it != null && it != miner }) n = ""
         val cb = coinbaseJson(h, miner, reward(h), n)
         return Template(h, tip.getString("hash"), maxOf(now, medianTimePast() + 1), nextTarget(), cb,
-            txRoot(listOf(cb)), reward(h))
+            txRoot(listOf(cb)), reward(h), miner, n)
+    }
+
+    /** The same template citing [scouts]: its coinbase also pays each scout's Nebulite miner (on this coin). */
+    fun withScouts(t: Template, scouts: List<Scouts.Info>): Template {
+        if (scouts.isEmpty() && t.scouts.isEmpty()) return t
+        val cb = coinbaseJson(t.height, t.miner, t.reward, t.name, scouts)
+        return Template(t.height, t.prev, t.timestamp, t.target, cb, txRoot(listOf(cb)), t.reward, t.miner, t.name)
+            .also { it.scouts = scouts }
     }
 
     /** The header prefix and hash target for a template with a given useful-work value. */
@@ -206,7 +220,11 @@ class SoloChain(private val file: File, val rules: CoinRules, val useful: Useful
 
     @Synchronized fun balance(address: String): Long = blocks.sumOf { b ->
         val cb = b.getJSONArray("txs").getJSONObject(0)
-        if (cb.optString("to") == address) cb.getLong("amount") else 0L
+        var sum = if (cb.optString("to") == address) cb.getLong("amount") else 0L
+        cb.optJSONArray("scout_rewards")?.let { r ->           // shares paid to scouts' miners
+            for (i in 0 until r.length()) if (r.getJSONObject(i).optString("to") == address) sum += r.getJSONObject(i).getLong("amount")
+        }
+        sum
     }
 
     @Synchronized fun toJson(): String = JSONArray().also { a -> blocks.forEach { a.put(it) } }.toString()
@@ -347,8 +365,9 @@ class TrajectoryRules : UsefulRules {
     }
     private val escapeGridCache = HashMap<String, Pair<EscapePlan, Double>>()
 
-    /** This block's mission (same as trajectory.problem): an escape mission 1 time in 4, if one is
-     *  known to be possible for the drawn star, otherwise a planet mission. */
+    /** This block's mission (same as trajectory.problem): out of 8 blocks, 2 escapes toward a star,
+     *  1 heliopause run, 1 interstellar-object intercept (each only if a path is known to exist) and
+     *  otherwise a planet mission. */
     fun mission(prevHash: String): JSONObject = synchronized(missionCache) {
         missionCache[prevHash]?.let { return JSONObject(it) }
         val m = computeMission(prevHash)
@@ -362,13 +381,23 @@ class TrajectoryRules : UsefulRules {
         val target = targets.getInt(h.mod(BigInteger.valueOf(targets.length().toLong())).toInt())
         val start = rulesJson.getInt("window_start_min") +
             h.shiftRight(8).mod(BigInteger.valueOf(rulesJson.getLong("window_start_spread"))).toInt()
-        val esc = rulesJson.getJSONObject("escape")
-        if (EscapeMission.hashInt(prevHash, "escape").mod(BigInteger.valueOf(esc.getLong("odds"))).signum() == 0) {
-            val em = EscapeMission.build(prevHash, start, rulesJson)
+        val kinds = rulesJson.getJSONArray("kind_draw")
+        val kind = kinds.getString(EscapeMission.hashInt(prevHash, "kind").mod(BigInteger.valueOf(kinds.length().toLong())).toInt())
+        if (kind == "escape" || kind == "heliopause") {
+            val em = if (kind == "escape") EscapeMission.build(prevHash, start, rulesJson)
+                     else EscapeMission.buildHeliopause(prevHash, start, rulesJson)
             val grid = Escape(TrajectoryModel(JSONObject(SoloData.NEBULITE_MODEL_JSON).put("mission", em)), EscapeMission(em)).grid()
             if (grid != null) {
                 synchronized(escapeGridCache) { escapeGridCache[prevHash] = grid }
                 return em
+            }
+        } else if (kind == "intercept") {
+            val ph = JSONObject(SoloData.NEBULITE_MODEL_JSON).getJSONObject("physics")
+            val im = IsoOrbit.build(prevHash, start, rulesJson, ph.getDouble("mu_sun"), ph.getDouble("au_per_day_to_kms"))
+            val grid = interceptGrid(TrajectoryModel(JSONObject(SoloData.NEBULITE_MODEL_JSON).put("mission", im)))
+            if (grid != null) {
+                synchronized(baselineCache) { baselineCache[prevHash] = grid }
+                return im
             }
         }
         val flyby = JSONArray().put(1).put(2).put(3)
@@ -376,9 +405,9 @@ class TrajectoryRules : UsefulRules {
         val years = rulesJson.getJSONObject("max_tof_years").getInt(target.toString())
         val draw = rulesJson.getJSONArray("mission_draw")
         val th = BigInteger(1, sha256(bytesOfHex(prevHash) + "type".toByteArray()))
-        val kind = draw.getString(th.mod(BigInteger.valueOf(draw.length().toLong())).toInt())
-        val mt = rulesJson.getJSONObject("mission_types").getJSONObject(kind)
-        return JSONObject().put("type", kind)
+        val type = draw.getString(th.mod(BigInteger.valueOf(draw.length().toLong())).toInt())
+        val mt = rulesJson.getJSONObject("mission_types").getJSONObject(type)
+        return JSONObject().put("type", type)
             .put("time_penalty_mps_per_year", mt.getInt("time_penalty_mps_per_year"))
             .put("target", target).put("window_start", start)
             .put("window_end", start + rulesJson.getInt("window_days"))
@@ -390,10 +419,33 @@ class TrajectoryRules : UsefulRules {
     fun model(prevHash: String): TrajectoryModel =
         TrajectoryModel(JSONObject(SoloData.NEBULITE_MODEL_JSON).put("mission", mission(prevHash)))
 
+    /** Best direct Earth-to-object transfer, as trajectory._intercept_grid (null if none works). */
+    private fun interceptGrid(m: TrajectoryModel): Pair<Double, Pair<IntArray, IntArray>>? {
+        val r = rulesJson.getJSONObject("intercept")
+        val nl = r.getInt("grid_launches"); val nt = r.getInt("grid_tofs"); val wd = r.getInt("window_days")
+        var best: Pair<Double, Pair<IntArray, IntArray>>? = null
+        for (i in 0 until nl) {
+            val launch = m.windowStart + Math.rint(i * wd.toDouble() / (nl - 1)).toInt()
+            for (j in 0 until nt) {
+                val tof = Math.rint(60 + 1740.0 * j / (nt - 1)).toInt()
+                val seq = intArrayOf(TrajectoryModel.EARTH, TrajectoryModel.ISO); val days = intArrayOf(launch, launch + tof)
+                val ev = m.evaluate(seq, days) ?: continue
+                if (best == null || ev.cost < best.first) best = ev.cost to (seq to days)
+            }
+        }
+        return best
+    }
+
     /** Best direct transfer on the same coarse grid as trajectory.baseline (Python rounding: half to even). */
     fun baseline(prevHash: String): Pair<Double, Pair<IntArray, IntArray>> = synchronized(baselineCache) {
         baselineCache[prevHash]?.let { return it }
         val m = model(prevHash)
+        if (m.missionType == "intercept") {
+            val b = interceptGrid(m)!!
+            baselineCache[prevHash] = b
+            while (baselineCache.size > 16) baselineCache.remove(baselineCache.keys.first())
+            return b
+        }
         val t = m.target
         val a = (1 + m.planets[t].el[0]) / 2
         val hoh = Math.PI * Math.sqrt(Math.pow(a, 3.0) / m.muSun)

@@ -15,13 +15,49 @@ import java.math.BigInteger
  */
 object Scouts {
     val PROOF_KEYS = listOf("height", "prev_hash", "timestamp", "target", "tx_root", "trajectory", "nonce")
+    const val REWARD_PCT = 5                  // each cited scout's Nebulite miner earns 5% of the block reward
     const val MAX_PER_BLOCK = 4
     const val MIN_WORK_DIVISOR = 3L          // a scout carries at least 1/3 of the work the citing block needs
     const val TIME_CAP_NUM = 51L             // scouts shorten the scored time by at most 2%
     const val TIME_CAP_DEN = 50L
 
     class Info(val hash: String, val star: Int, val starName: String, val effectiveTarget: BigInteger,
-               val vinfKms: Double, val proof: JSONObject)
+               val vinfKms: Double, val proof: JSONObject, val miner: String, val rewardTo: String)
+
+    /** JSON exactly as Python's json.dumps(obj, sort_keys=True, separators=(",", ":")) writes it. */
+    fun canonical(v: Any?): String = when (v) {
+        null, JSONObject.NULL -> "null"
+        is JSONObject -> v.keys().asSequence().sorted().joinToString(",", "{", "}") { quote(it) + ":" + canonical(v.opt(it)) }
+        is JSONArray -> (0 until v.length()).joinToString(",", "[", "]") { canonical(v.opt(it)) }
+        is String -> quote(v)
+        is Boolean -> v.toString()
+        is Int, is Long -> v.toString()
+        is Number -> if (v.toDouble() == Math.floor(v.toDouble()) && Math.abs(v.toDouble()) < 1e15) v.toLong().toString() else v.toString()
+        else -> quote(v.toString())
+    }
+
+    private fun quote(s: String) = buildString {
+        append('"')
+        for (c in s) {
+            when {
+                c == '"' -> append("\\\"")
+                c == '\\' -> append("\\\\")
+                c == '\n' -> append("\\n")
+                c == '\r' -> append("\\r")
+                c == '\t' -> append("\\t")
+                c == '\b' -> append("\\b")
+                c == '\u000C' -> append("\\f")
+                c < ' ' || c.code > 127 -> append("\\u%04x".format(c.code))
+                else -> append(c)
+            }
+        }
+        append('"')
+    }
+
+    fun txid(tx: JSONObject): String = hexOf(sha256d(canonical(tx).toByteArray()))
+
+    /** The same wallet's Pulsarite address (as scouts.pulsarite_address). */
+    fun pulsariteAddress(nebuliteAddress: String) = Coin.ADDRESS_PREFIX + nebuliteAddress.substring(NebuliteCoin.ADDRESS_PREFIX.length)
 
     private val nebuliteRules = TrajectoryRules()
     private val cache = object : LinkedHashMap<String, Info?>(64, 0.75f, true) {
@@ -29,8 +65,12 @@ object Scouts {
     }
 
     /** A Nebulite block (as stored in a solo chain or served by /scouts) reduced to a proof. */
-    fun proofOf(block: JSONObject): JSONObject =
-        JSONObject().also { p -> PROOF_KEYS.forEach { p.put(it, block.opt(it)) } }
+    fun proofOf(block: JSONObject): JSONObject = JSONObject().also { p ->
+        PROOF_KEYS.forEach { p.put(it, block.opt(it)) }
+        val txs = block.getJSONArray("txs")
+        p.put("coinbase", txs.getJSONObject(0))                         // who mined it
+        p.put("txids", JSONArray().also { a -> for (i in 0 until txs.length()) a.put(txid(txs.getJSONObject(i))) })
+    }
 
     /** The Nebulite block hash, as nebulite/chain.block_hash. */
     fun nebuliteHash(p: JSONObject): String {
@@ -60,7 +100,15 @@ object Scouts {
     }
 
     private fun check(p: JSONObject): Info? {
-        if (PROOF_KEYS.any { !p.has(it) }) return null
+        if ((PROOF_KEYS + listOf("coinbase", "txids")).any { !p.has(it) }) return null
+        // who mined it: the coinbase's txid comes first, and all txids reproduce the block's tx_root
+        val cb = p.getJSONObject("coinbase")
+        val ids = p.getJSONArray("txids")
+        val to = cb.optString("to", "")
+        if (cb.opt("coinbase") != true || ids.length() < 1 || !Wallet.isValidAddress(to, NebuliteCoin.ADDRESS_PREFIX)) return null
+        if (txid(cb) != ids.getString(0)) return null
+        val root = hexOf(sha256d((0 until ids.length()).fold(ByteArray(0)) { acc, i -> acc + bytesOfHex(ids.getString(i)) }))
+        if (root != p.getString("tx_root")) return null
         val tr = p.getJSONObject("trajectory")
         val esc = tr.optJSONObject("escape") ?: return null
         val prev = p.getString("prev_hash")
@@ -75,7 +123,7 @@ object Scouts {
         val eff = nebuliteEffectiveTarget(p.getString("target"), tr.getLong("cost"), tr.getLong("baseline"))
         if (BigInteger(h, 16) > eff) return null
         val star = mission.getJSONObject("target_star")
-        return Info(h, star.getInt("id"), star.getString("name"), eff, esc.getInt("vinf_ms") / 1000.0, p)
+        return Info(h, star.getInt("id"), star.getString("name"), eff, esc.getInt("vinf_ms") / 1000.0, p, to, pulsariteAddress(to))
     }
 
     /** As chain.scout_work_ok. */

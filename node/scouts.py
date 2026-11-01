@@ -44,7 +44,18 @@ def _load(name, filename):
 NT = _load("nebulite_trajectory", "trajectory.py") if NEBULITE_DIR else None
 NC = _load("nebulite_config", "config.py") if NEBULITE_DIR else None
 
-PROOF_KEYS = {"height", "prev_hash", "timestamp", "target", "tx_root", "trajectory", "nonce"}
+PROOF_KEYS = {"height", "prev_hash", "timestamp", "target", "tx_root", "trajectory", "nonce", "coinbase", "txids"}
+NEBULITE_PREFIX, PULSARITE_PREFIX = "nblt", "plsr"
+
+
+def _canonical(obj) -> bytes:
+    return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()
+
+
+def pulsarite_address(nebulite_address: str) -> str:
+    """The same wallet's Pulsarite address: addresses differ only in their prefix (the checksum
+    covers the key hash alone), so one key owns both."""
+    return PULSARITE_PREFIX + nebulite_address[len(NEBULITE_PREFIX):]
 
 
 class ScoutError(Exception):
@@ -101,10 +112,27 @@ def _verify(k):
                     and 0 <= p["nonce"] < 2 ** 64 and isinstance(p["prev_hash"], str) and len(p["prev_hash"]) == 64
                     and isinstance(p["target"], str) and len(p["target"]) == 64 and isinstance(p["tx_root"], str))
         bytes.fromhex(p["prev_hash"]); int(p["target"], 16); bytes.fromhex(p["tx_root"])
+        ok_types = ok_types and isinstance(p["txids"], list) and 1 <= len(p["txids"]) <= 1000 and all(
+            isinstance(t, str) and len(t) == 64 and bytes.fromhex(t) is not None for t in p["txids"])
     except (TypeError, ValueError, KeyError):
         ok_types = False
     if not ok_types:
         raise ScoutError("malformed scout proof")
+    # who mined it: the coinbase is the first transaction, and the txids reproduce the block's tx_root
+    cb = p["coinbase"]
+    if (not isinstance(cb, dict) or cb.get("coinbase") is not True or not isinstance(cb.get("to"), str)
+            or not cb["to"].startswith(NEBULITE_PREFIX) or len(cb["to"]) != len(NEBULITE_PREFIX) + 48):
+        raise ScoutError("scout proof needs the Nebulite block's coinbase")
+    try:
+        raw = bytes.fromhex(cb["to"][len(NEBULITE_PREFIX):])
+        valid_address = _sha256d(raw[:20])[:4] == raw[20:]
+    except ValueError:
+        valid_address = False
+    if not valid_address:
+        raise ScoutError("scout's miner address is malformed")
+    if _sha256d(_canonical(cb)).hex() != p["txids"][0] or \
+            _sha256d(b"".join(bytes.fromhex(t) for t in p["txids"])).hex() != p["tx_root"]:
+        raise ScoutError("scout's coinbase isn't the one its block commits to")
     tr = p["trajectory"]
     if (not isinstance(tr, dict) or set(tr) != {"seq", "days", "cost", "baseline", "escape"}
             or not all(isinstance(tr[x], int) and not isinstance(tr[x], bool) for x in ("cost", "baseline"))):
@@ -127,5 +155,6 @@ def _verify(k):
         raise ScoutError("scout block doesn't meet its own proof-of-work target")
     star = prob["target_star"]
     return (("hash", h), ("star", star["id"]), ("star_name", star["name"]), ("effective_target", eff),
+            ("miner", cb["to"]), ("reward_to", pulsarite_address(cb["to"])),
             ("work", (1 << 256) // (eff + 1)), ("vinf_kms", ev["vinf_kms"]), ("au_per_year", ev["au_per_year"]),
             ("years_to_550_au", ev["years"]), ("launch_day", tr["days"][0]))

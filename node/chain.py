@@ -259,7 +259,7 @@ class State:
         cb = txs[0]
         if block["height"] == 0:
             return
-        if set(cb) - {"name"} != {"coinbase", "to", "amount", "height"} or cb["coinbase"] is not True:
+        if set(cb) - {"name", "scout_rewards"} != {"coinbase", "to", "amount", "height"} or cb["coinbase"] is not True:
             raise ValidationError("bad coinbase fields")
         if cb["height"] != block["height"]:
             raise ValidationError("coinbase height mismatch")
@@ -268,6 +268,8 @@ class State:
         if cb["amount"] != block_reward(block["height"]) + fees:
             raise ValidationError("wrong coinbase amount")
         self.balances[cb["to"]] = self.balance(cb["to"]) + cb["amount"]
+        for r in cb.get("scout_rewards", []):          # checked against the block's scouts in validate_block
+            self.balances[r["to"]] = self.balance(r["to"]) + r["amount"]
         if "name" in cb:
             self.claim_name(cb["to"], cb["name"])
 
@@ -319,6 +321,9 @@ def validate_block(block: dict, blocks: list, state: State, now=None) -> State:
     if block["tx_root"] != tx_root(block["txs"]):
         raise ValidationError("tx_root mismatch")
     scouted = check_scouts(block, state)
+    want = scout_rewards(block["height"], scouted)
+    if block["txs"][0].get("scout_rewards", []) != want or (not want and "scout_rewards" in block["txs"][0]):
+        raise ValidationError("coinbase must pay each cited scout's miner exactly its share")
     score = route_score(block["prev_hash"], block["route"], [s["star"] for s in scouted])
     h = block_hash(block)
     if block["hash"] != h:
@@ -357,6 +362,12 @@ def check_scouts(block: dict, state: State) -> list:
             raise ValidationError("one scout per survey star")
         out.append(v)
     return out
+
+
+def scout_rewards(height: int, scouted: list) -> list:
+    """What the coinbase pays the cited scouts' miners: SCOUT_REWARD_PCT of the block reward each,
+    in the order the scouts are cited, to each Nebulite miner's Pulsarite address."""
+    return [{"to": s["reward_to"], "amount": block_reward(height) * C.SCOUT_REWARD_PCT // 100} for s in scouted]
 
 
 def scout_work_ok(scout: dict, block_effective_target: int) -> bool:
@@ -503,6 +514,7 @@ class Blockchain:
         }
         if scouts:
             block["scouts"] = list(scouts)
+            coinbase["scout_rewards"] = scout_rewards(height, [SC.verify(p) for p in scouts])
         block["tx_root"] = tx_root(block["txs"])
         block["hash"] = ""
         return block
@@ -544,7 +556,9 @@ class Blockchain:
                 "stop_ids": sc["stops"],
                 "scouted": [c["star_name"] for c in cited], "scouted_ids": [c["star"] for c in cited],
                 "scouts": [{"star": c["star_name"], "nebulite_block": c["hash"], "vinf_kms": round(c["vinf_kms"], 1),
-                            "au_per_year": round(c["au_per_year"], 2)} for c in cited],
+                            "au_per_year": round(c["au_per_year"], 2), "rewarded": c["reward_to"],
+                            "reward": block_reward(b["height"]) * C.SCOUT_REWARD_PCT // 100 / C.UNITS_PER_COIN}
+                           for c in cited],
                 "improvement_pct": round(100 * (1 - sc["mission_time"] / sc["baseline"]), 2),
             })
         return out

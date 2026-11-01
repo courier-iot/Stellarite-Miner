@@ -63,11 +63,16 @@ def main():
         if "prefix" not in scored:
             print("Trajectory refused:", scored.get("error"))
             continue
-        path = "-".join(T.body_name(b) if b == T.SUN else T.PLANETS[b][1] for b in seq)
-        if mission["type"] == "escape":
-            desc = (f"escape toward {mission['target_star']['name']} via {path}: {scored['vinf_kms']:.1f} km/s "
-                    f"({scored['au_per_year']:.2f} AU/yr), 550 AU in {scored['years']:.0f} yr "
+        path = "-".join(T.body_name(b) if b in (T.SUN, T.ISO) else T.PLANETS[b][1] for b in seq)
+        if mission["type"] in ("escape", "heliopause"):
+            toward = "the heliosphere's nose" if mission["type"] == "heliopause" else mission["target_star"]["name"]
+            desc = (f"{mission['type']} toward {toward} via {path}: {scored['vinf_kms']:.1f} km/s "
+                    f"({scored['au_per_year']:.2f} AU/yr), {mission['goal_au']} AU in {scored['years']:.0f} yr "
                     f"({scored['improvement_pct']:+.1f}% vs baseline)")
+        elif mission["type"] == "intercept":
+            desc = (f"intercept of the interstellar object via {path}: {scored['dv_kms']:.2f} km/s, "
+                    f"meeting it at {scored['encounter_kms']:.1f} km/s on {scored['arrival_date']} "
+                    f"({scored['improvement_pct']:+.1f}% vs direct)")
         else:
             desc = (f"{mission['type']} mission {path}: {scored['dv_kms']:.2f} km/s, {scored['years']:.1f} yr, "
                     f"arriving {scored['arrival_date']} ({scored['improvement_pct']:+.1f}% vs direct)")

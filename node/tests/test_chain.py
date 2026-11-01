@@ -518,6 +518,16 @@ class ScoutTests(unittest.TestCase):
         with self.assertRaises(SC.ScoutError):                 # ... or the physics
             SC.verify(bad)
 
+    def test_heliopause_run_is_not_a_scout(self):
+        import subprocess
+        tool = os.path.join(os.path.dirname(__file__), "..", "..", "tools", "make_scouts.py")
+        out = subprocess.run([sys.executable, tool, "[]", "8", "1", "helio"], capture_output=True, text=True, check=True,
+                             env=dict(os.environ, MISSION_TYPE="heliopause")).stdout
+        proof = json.loads(out)[0]
+        self.assertIn("escape", proof["trajectory"])           # same shape as an escape block ...
+        with self.assertRaises(SC.ScoutError):                 # ... but it isn't aimed at a star
+            SC.verify(proof)
+
     def plan_for(self, scouted):
         from route_opt import optimise, optimise_plan
         prob = stars.problem(self.t["prev_hash"])
@@ -549,6 +559,12 @@ class ScoutTests(unittest.TestCase):
         block["hash"] = ch.block_hash(block)
         bc.add_block(block, now=self.clock())
         self.assertIn(v["hash"], bc.state.used_scouts)
+        # the scout's Nebulite miner is paid on Pulsarite, at the same wallet's plsr address
+        self.assertEqual(v["reward_to"], "plsr" + v["miner"][4:])
+        self.assertTrue(is_valid_address(v["reward_to"]))
+        share = ch.block_reward(block["height"]) * C.SCOUT_REWARD_PCT // 100
+        self.assertEqual(bc.state.balance(v["reward_to"]), share)
+        self.assertEqual(bc.state.balance(block["txs"][0]["to"]), ch.block_reward(block["height"]))   # miner keeps all
         row = bc.route_stats(1)[0]
         self.assertEqual(row["scouted_ids"], [v["star"]])
         # the header commits to the scouts: dropping them changes the hash
@@ -556,6 +572,34 @@ class ScoutTests(unittest.TestCase):
         # citing the same Nebulite block again is refused
         with self.assertRaises(ch.ValidationError):
             ch.check_scouts(dict(block, prev_hash=block["prev_hash"]), bc.state)
+
+    def test_scout_reward_must_be_exact(self):
+        v = SC.verify(self.proofs[0])
+        tmp = tempfile.TemporaryDirectory()
+        bc = ch.Blockchain(tmp.name)
+        t = bc.build_template(Wallet().addr, now=self.clock(), scouts=[self.proofs[0]])
+        t["route"] = self.plan_for([v["star"]])
+        for bad in ([], [{"to": t["txs"][0]["to"], "amount": t["txs"][0]["scout_rewards"][0]["amount"]}],
+                    [{"to": v["reward_to"], "amount": t["txs"][0]["scout_rewards"][0]["amount"] * 2}]):
+            b = json.loads(json.dumps(t))
+            b["txs"][0]["scout_rewards"] = bad
+            b["tx_root"] = ch.tx_root(b["txs"])
+            sc = ch.route_score(b["prev_hash"], b["route"], [v["star"]])
+            prefix, target = ch.header_prefix(b), ch.effective_target(b["target"], sc["length"], sc["baseline"])
+            nonce = 0
+            while int.from_bytes(ch.pow_hash(prefix, nonce), "big") > target:
+                nonce += 1
+            b["nonce"] = nonce
+            b["hash"] = ch.block_hash(b)
+            with self.assertRaises(ch.ValidationError):
+                bc.add_block(b, now=self.clock())
+        # a proof whose coinbase was swapped for someone else's is refused
+        forged = json.loads(json.dumps(self.proofs[0]))
+        other = "nblt" + Wallet().addr[4:]                      # someone else's (valid) Nebulite address
+        self.assertNotEqual(other, forged["coinbase"]["to"])
+        forged["coinbase"]["to"] = other
+        with self.assertRaises(SC.ScoutError):
+            SC.verify(forged)
 
     def test_scout_rules(self):
         st = ch.State()
