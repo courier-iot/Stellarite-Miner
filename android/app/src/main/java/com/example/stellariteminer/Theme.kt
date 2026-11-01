@@ -64,6 +64,9 @@ object Theme {
         if (root is ViewGroup) for (i in 0 until root.childCount) applyFonts(root.getChildAt(i))
     }
 
+    /** The body (mono) typeface, for custom-drawn text. */
+    fun monoTypeface(ctx: Context): Typeface? { load(ctx); return mono }
+
     /** Neon glow on text. */
     fun glow(tv: TextView, radius: Float = 18f) = tv.setShadowLayer(radius, 0f, 0f, CRIMSON)
 

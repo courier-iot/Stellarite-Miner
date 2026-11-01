@@ -397,7 +397,7 @@ class Blockchain:
             ev = T.evaluate(tr["seq"], tr["days"])
             out.append({
                 "height": b["height"], "miner": b["txs"][0]["to"], "timestamp": b["timestamp"],
-                "path": [T.PLANETS[p][0] for p in tr["seq"]], "days": tr["days"],
+                "path": [T.PLANETS[p][0] for p in tr["seq"]], "seq": tr["seq"], "days": tr["days"],
                 "dv_kms": round(ev["dv_kms"], 3), "years": round(ev["years"], 2),
                 "cost": tr["cost"], "baseline": tr["baseline"],
                 "improvement_pct": round(100 * (1 - tr["cost"] / tr["baseline"]), 2),

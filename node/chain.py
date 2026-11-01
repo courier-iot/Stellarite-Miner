@@ -375,7 +375,7 @@ class Blockchain:
             sc = route_score(b["prev_hash"], b["route"])
             out.append({
                 "height": b["height"], "miner": b["txs"][0]["to"], "timestamp": b["timestamp"],
-                "route": [stars.CATALOG[s]["name"] for s in b["route"]],
+                "route": [stars.CATALOG[s]["name"] for s in b["route"]], "route_ids": b["route"],
                 "length_ly": sc["length"] / 1000, "baseline_ly": sc["baseline"] / 1000,
                 "improvement_pct": round(100 * (1 - sc["length"] / sc["baseline"]), 2),
             })

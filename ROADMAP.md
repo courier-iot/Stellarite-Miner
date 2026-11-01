@@ -21,15 +21,17 @@ Today: straight-line routes from the Sun through 24 stars at fixed positions, sc
 - [ ] **Science-weighted targets.** Favour stars with known exoplanets or habitable-zone planets (from the NASA Exoplanet Archive), so routes prioritise worthwhile destinations. Score science value per year of travel.
 - [ ] **Stop vs flyby.** Let a route mark stars as flybys (pass through) or stops (decelerate). Stopping costs time, and fuel once fuel is modelled.
 - [ ] **Best-known route archive.** Keep the best route ever found for each star set, so the map improves over time instead of only growing.
-- [ ] **3D route map.** A web page (served by the node) and an app screen that draw recent routes among the stars.
+- [x] **3D route map in the app** (MAP tab).
+- [ ] **3D route map on the web.** A page served by the node that draws recent routes among the stars.
 
 ## Nebulite: spacecraft trajectories
 
 Today: planets on circular, flat orbits; Lambert transfers between planets; patched-conic flybys; cost = fuel (km/s) + 250 m/s per year of travel.
 
-- [ ] **Real planet motion (ephemerides).** Replace circular orbits with JPL's approximate Keplerian elements and their rates (valid 1800–2050). This adds eccentricity and inclination, so Mars, for example, really is closer at some launch windows. It's the planetary equivalent of star movement, and it matters for decade-long missions.
-  - [ ] Move to 3D positions and velocities, with a 3D Lambert solver.
-  - [ ] Regression tests against real missions: Voyager 2 (E-J-S-U-N), Cassini (V-V-E-J-S), Juno (E-E-J). The model should rediscover routes close to theirs.
+- [x] **Real planet motion (ephemerides).** Planets follow JPL's approximate Keplerian elements and their rates (elliptical, inclined orbits, valid 1800–2050), in 3D with a 3D Lambert solver.
+  - [x] Checked against reality: oppositions of Mars through Neptune land within a day of the real dates, Mars' 2003 close approach matches to 0.0003 AU, and Voyager 1 and 2 flown on their real dates need almost no flyby fuel.
+  - [ ] Missions arriving after 2050 (some Uranus and Neptune missions) use the elements beyond their fitted range; switch to JPL's long-span table (3000 BC–3000 AD) or a full ephemeris.
+  - [ ] Regression tests for Cassini (V-V-E-J-S) and Juno (E-E-J), once multi-revolution legs and deep-space manoeuvres exist.
 - [ ] **Travel time as a mission parameter.** Travel time is already scored, as a fixed 250 m/s per year. Make the trade-off part of each mission instead (crewed missions value speed, robotic ones value fuel) and report launch and arrival dates in plain calendar terms.
   - [ ] Per-mission `time_penalty` and `max_tof` chosen from the block hash, across a range of mission types.
   - [ ] Show arrival dates on the HUD and in `/missions`.
@@ -47,7 +49,8 @@ Today: planets on circular, flat orbits; Lambert transfers between planets; patc
 - [ ] **Pool for useful work.** Let phones share block rewards by submitting partial solutions (good routes or trajectories plus low-difficulty hashes), so a phone earns steadily instead of rarely.
 - [ ] **Faster sync and light clients.** Add Merkle trees for transactions, header-first sync, and compact proofs.
 - [ ] **Network security.** HTTPS between nodes, peer limits and rate limiting, signed app releases with a real keystore.
-- [ ] **Visuals in the app.** A 3D star map for Pulsarite routes and an orbit diagram for Nebulite missions on the RIG screen.
+- [x] **3D map tab.** Star map with mined routes (Pulsarite) and real-orbit mission map (Nebulite), with the rig's live work highlighted.
+  - [ ] Tap a star or planet for details; time slider to watch a mission fly; show star motion once Pulsarite models it.
 
 ## Done
 
@@ -55,3 +58,5 @@ Today: planets on circular, flat orbits; Lambert transfers between planets; patc
 - [x] Nebulite: separate coin with trajectory proof of work, Lambert solver checked against numerical integration, gravity-assist flybys, travel-time penalty, mission log (`/missions`)
 - [x] Phone optimisers for both coins, cross-checked against the nodes' physics
 - [x] Multi-coin app with a mining ledger
+- [x] Nebulite: real 3D planet motion from JPL elements, validated against oppositions and the Voyager missions
+- [x] MAP tab: interactive 3D star map and orbit map

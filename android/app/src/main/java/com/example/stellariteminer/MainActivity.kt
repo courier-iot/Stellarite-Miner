@@ -53,8 +53,12 @@ class MainActivity : Activity() {
     private lateinit var ledger: LedgerPage
     private lateinit var tabRig: Button
     private lateinit var tabLedger: Button
+    private lateinit var tabMap: Button
+    private lateinit var mapPage: View
+    private lateinit var map: MapPage
 
-    private var showingLedger = false
+    private var page = PAGE_RIG
+    private val showingLedger get() = page == PAGE_LEDGER
     private var lastLedgerRender = 0L
     private val chips = mutableMapOf<String, TextView>()
 
@@ -63,6 +67,7 @@ class MainActivity : Activity() {
         override fun run() {
             render(MinerService.status)
             if (showingLedger && System.currentTimeMillis() - lastLedgerRender > 5000) renderLedger()
+            if (page == PAGE_MAP) map.refreshLive()
             handler.postDelayed(this, 1000)
         }
     }
@@ -101,9 +106,13 @@ class MainActivity : Activity() {
         ledgerPage = findViewById(R.id.ledgerPage)
         tabRig = findViewById(R.id.tabRig)
         tabLedger = findViewById(R.id.tabLedger)
+        tabMap = findViewById(R.id.tabMap)
+        mapPage = findViewById(R.id.mapPage)
+        map = MapPage(this, findViewById(R.id.map3d), findViewById(R.id.mapTitle), findViewById(R.id.mapLegend))
         ledger = LedgerPage(findViewById(R.id.ledgerContent), Ledger.get(filesDir))
 
         Theme.applyFonts(window.decorView)
+        findViewById<Map3DView>(R.id.map3d).setTypeface(Theme.monoTypeface(this))
         Theme.glow(findViewById(R.id.title), 12f)
         Theme.glow(hashrate, 18f)
 
@@ -128,9 +137,11 @@ class MainActivity : Activity() {
 
         toggle.setOnClickListener { if (MinerService.status.running) stopMiner() else startMiner() }
         findViewById<Button>(R.id.test).setOnClickListener { testConnection() }
-        tabRig.setOnClickListener { showLedger(false) }
-        tabLedger.setOnClickListener { showLedger(true) }
-        showLedger(false)
+        tabRig.setOnClickListener { showPage(PAGE_RIG) }
+        tabMap.setOnClickListener { showPage(PAGE_MAP) }
+        tabLedger.setOnClickListener { showPage(PAGE_LEDGER) }
+        findViewById<Button>(R.id.mapRefresh).setOnClickListener { saveSettings(); map.load(prefs, force = true) }
+        showPage(PAGE_RIG)
     }
 
     override fun onResume() {
@@ -285,13 +296,16 @@ class MainActivity : Activity() {
 
     // ---- pages --------------------------------------------------------
 
-    private fun showLedger(show: Boolean) {
-        showingLedger = show
-        rigPage.visibility = if (show) View.GONE else View.VISIBLE
-        ledgerPage.visibility = if (show) View.VISIBLE else View.GONE
-        tabRig.setTextColor(if (show) Theme.MUTED else Theme.CRIMSON_LIGHT)
-        tabLedger.setTextColor(if (show) Theme.CRIMSON_LIGHT else Theme.MUTED)
-        if (show) renderLedger()
+    private fun showPage(p: Int) {
+        page = p
+        rigPage.visibility = if (p == PAGE_RIG) View.VISIBLE else View.GONE
+        mapPage.visibility = if (p == PAGE_MAP) View.VISIBLE else View.GONE
+        ledgerPage.visibility = if (p == PAGE_LEDGER) View.VISIBLE else View.GONE
+        tabRig.setTextColor(if (p == PAGE_RIG) Theme.CRIMSON_LIGHT else Theme.MUTED)
+        tabMap.setTextColor(if (p == PAGE_MAP) Theme.CRIMSON_LIGHT else Theme.MUTED)
+        tabLedger.setTextColor(if (p == PAGE_LEDGER) Theme.CRIMSON_LIGHT else Theme.MUTED)
+        if (p == PAGE_LEDGER) renderLedger()
+        if (p == PAGE_MAP) { saveSettings(); map.load(prefs) }
     }
 
     private fun renderLedger() {
@@ -334,5 +348,11 @@ class MainActivity : Activity() {
         } else {
             third.text = Format.coins(s.earnedUnits, s.unitsPerCoin, 1)
         }
+    }
+
+    companion object {
+        private const val PAGE_RIG = 0
+        private const val PAGE_MAP = 1
+        private const val PAGE_LEDGER = 2
     }
 }

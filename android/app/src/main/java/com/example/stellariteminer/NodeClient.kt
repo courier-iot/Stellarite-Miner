@@ -84,6 +84,13 @@ class NodeClient(baseUrl: String, private val address: String = "") : PoolBacken
     override fun close() {}
 
     internal fun request(method: String, path: String, payload: JSONObject?): Pair<Int, JSONObject> {
+        val (code, text) = requestRaw(method, path, payload)
+        val json = try { JSONObject(text) } catch (e: Exception) { JSONObject().put("error", "HTTP $code") }
+        return code to json
+    }
+
+    /** Raw response text, for endpoints that return JSON arrays (/routes, /missions). */
+    internal fun requestRaw(method: String, path: String, payload: JSONObject?): Pair<Int, String> {
         val conn = URL(base + path).openConnection() as HttpURLConnection
         try {
             conn.requestMethod = method
@@ -97,9 +104,7 @@ class NodeClient(baseUrl: String, private val address: String = "") : PoolBacken
             }
             val code = conn.responseCode
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val text = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
-            val json = try { JSONObject(text) } catch (e: Exception) { JSONObject().put("error", "HTTP $code") }
-            return code to json
+            return code to (stream?.bufferedReader()?.use { it.readText() } ?: "{}")
         } finally {
             conn.disconnect()
         }

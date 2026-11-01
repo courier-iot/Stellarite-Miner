@@ -443,6 +443,80 @@
                     android:paddingEnd="22dp"
                     android:paddingBottom="24dp" />
             </ScrollView>
+
+            <!-- MAP page -->
+            <LinearLayout
+                android:id="@+id/mapPage"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="22dp"
+                    android:paddingTop="14dp"
+                    android:paddingEnd="12dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:letterSpacing="0.3"
+                            android:text="// NAVIGATION"
+                            android:textColor="@color/amber"
+                            android:textSize="10sp" />
+
+                        <TextView
+                            android:id="@+id/mapTitle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:letterSpacing="0.08"
+                            android:tag="heavy"
+                            android:text="STAR_MAP"
+                            android:textColor="@color/crimson_light"
+                            android:textSize="22sp" />
+                    </LinearLayout>
+
+                    <Button
+                        android:id="@+id/mapRefresh"
+                        style="?android:attr/borderlessButtonStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:letterSpacing="0.15"
+                        android:text="[REFRESH]"
+                        android:textColor="@color/amber"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <com.example.stellariteminer.Map3DView
+                    android:id="@+id/map3d"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:contentDescription="3D map. Drag to rotate, pinch to zoom, double-tap to reset." />
+
+                <TextView
+                    android:id="@+id/mapLegend"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:lineSpacingExtra="2dp"
+                    android:paddingStart="22dp"
+                    android:paddingTop="8dp"
+                    android:paddingEnd="22dp"
+                    android:paddingBottom="12dp"
+                    android:textColor="@color/muted"
+                    android:textSize="11sp" />
+            </LinearLayout>
         </FrameLayout>
 
         <!-- Bottom tabs -->
@@ -465,6 +539,17 @@
                 android:letterSpacing="0.25"
                 android:tag="display"
                 android:text="@string/tab_rig"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/tabMap"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:letterSpacing="0.25"
+                android:tag="display"
+                android:text="@string/tab_map"
                 android:textSize="13sp" />
 
             <Button

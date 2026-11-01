@@ -203,12 +203,13 @@ class ChainTests(unittest.TestCase):
 
     def test_lambert_matches_hohmann(self):
         import math
-        h = T.hohmann_days(3)
+        a2 = 1.523679
+        h = math.pi * math.sqrt(((1 + a2) / 2) ** 3 / T.MU_SUN)
         self.assertAlmostEqual(h, 259, delta=1)
-        a2 = T.PLANETS[3][2]
-        v1, _ = T.lambert((1, 0), (-a2 * math.cos(1e-3), -a2 * math.sin(1e-3)), h * 0.999)
+        v1, _ = T.lambert((1, 0, 0), (-a2 * math.cos(1e-3), -a2 * math.sin(1e-3), 0), h * 0.999)
         vinf = (math.hypot(*v1) - math.sqrt(T.MU_SUN)) * T.AU_PER_DAY_TO_KMS
         self.assertAlmostEqual(vinf, 2.94, delta=0.03)
+
 
     def test_persistence(self):
         with tempfile.TemporaryDirectory() as d:
@@ -278,6 +279,44 @@ class ApiTests(unittest.TestCase):
     def test_bad_address_refused(self):
         r = self.client.get("/mining/work?address=nope")
         self.assertEqual(r.status_code, 400)
+
+
+class EphemerisTests(unittest.TestCase):
+    """The planet model against real-world events."""
+
+    @staticmethod
+    def day(y, m, d):
+        import datetime as dt
+        return (dt.datetime(y, m, d) - dt.datetime(2000, 1, 1, 12)).total_seconds() / 86400
+
+    def test_oppositions_within_two_days(self):
+        import math
+
+        def gap(p, d):
+            lon = lambda q: math.degrees(math.atan2(T.planet_state(q, d)[0][1], T.planet_state(q, d)[0][0]))
+            return abs((lon(p) - lon(2) + 180) % 360 - 180)
+        for p, date in [(3, (2018, 7, 27)), (3, (2022, 12, 8)), (4, (2023, 11, 3)),
+                        (5, (2023, 8, 27)), (6, (2023, 11, 13)), (7, (2023, 9, 19))]:
+            d0 = self.day(*date)
+            off = min(range(-40, 41), key=lambda k: gap(p, d0 + k / 4)) / 4
+            self.assertLessEqual(abs(off), 2, f"planet {p} opposition {date}")
+
+    def test_mars_2003_close_approach(self):
+        import math
+        d0 = self.day(2003, 8, 27)
+        dist = min(math.dist(T.planet_state(3, d0 + k / 4)[0], T.planet_state(2, d0 + k / 4)[0])
+                   for k in range(-8, 9))
+        self.assertAlmostEqual(dist, 0.3727, delta=0.002)
+
+    def test_voyager_flybys_were_nearly_free(self):
+        for seq, dates in [([2, 4, 5], [(1977, 9, 5), (1979, 3, 5), (1980, 11, 12)]),
+                           ([2, 4, 5, 6, 7], [(1977, 8, 20), (1979, 7, 9), (1981, 8, 26),
+                                              (1986, 1, 24), (1989, 8, 25)])]:
+            ev = T.evaluate(seq, [round(self.day(*d)) for d in dates])
+            self.assertIsNotNone(ev)
+            self.assertAlmostEqual(ev["launch_kms"], 10.2, delta=0.5)   # Voyager C3 ~102-106 km2/s2
+            for fb in ev["flyby_kms"]:
+                self.assertLess(fb, 0.5)
 
 
 if __name__ == "__main__":

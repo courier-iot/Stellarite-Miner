@@ -5,4 +5,5 @@
     <string name="channel_name">Mining status</string>
     <string name="tab_rig">RIG</string>
     <string name="tab_ledger">LEDGER</string>
+    <string name="tab_map">MAP</string>
 </resources>

@@ -175,6 +175,8 @@ Nodes forward new blocks and transactions to each other and re-sync every 30 sec
 | POST | `/mining/submit` | `{ "job_id", "route", "nonce" }` |
 | GET | `/routes?limit=20` | the route map: recent blocks' routes, lengths, improvement |
 | GET | `/stars` | the star catalog in use |
+
+Nebulite's node has the same transaction, balance, chain and peer endpoints, plus `GET /mining/work`, `POST /mining/trajectory` (`{job_id, seq, days}`), `POST /mining/submit` (`{job_id, seq, days, nonce}`), `GET /missions` and `GET /planets` (orbital elements and physics constants).
 | GET/POST | `/peers` | list / add peers |
 | POST | `/blocks` | peers announce new blocks |
 
@@ -210,6 +212,8 @@ In the app, pick the **NBLT** chip, enter `http://<your computer's IP>:5001` and
 - arrival speed at the target (what must be shed to stop)
 - travel time: each year of flight counts as 250 m/s
 
+Planets follow **real orbits**: JPL's approximate Keplerian elements with their slow drift over time, giving elliptical, tilted orbits in 3D (valid 1800–2050). Checked against reality, the model puts Mars-through-Neptune oppositions within a day of the real dates and Mars' 2003 close approach within 0.0003 AU. Flown on their actual dates, Voyager 1 and 2 need almost no fuel at their flybys, just as in reality.
+
 Each leg between planets is solved with Lambert's problem, the standard tool for "leave here on day A, arrive there on day B". The solver was checked against step-by-step orbit integration (agreement to 1e-11) and textbook Hohmann transfers. It refuses paths that dive inside Mercury's orbit, and flybys slower than 1 km/s, which aren't real gravity assists.
 
 **The score.** Every node computes the best *direct* transfer on a coarse grid as the baseline. A trajectory 15% cheaper than that makes the hash target (1/0.85)¹² ≈ 7× easier. In testing, the optimisers found Jupiter-assisted routes to Saturn and Uranus 14–20% cheaper than going direct, the same strategy the Voyager and Cassini missions used. Jupiter missions gain less (2–5%), because there's little to fly past on the way.
@@ -220,7 +224,18 @@ Each leg between planets is solved with Lambert's problem, the standard tool for
 
 **The mission log.** `GET /missions` lists recent blocks' trajectories: planet path, encounter days, Δv, years and improvement.
 
-**Limits today.** Planets move on circular, flat orbits; there are no deep-space engine burns or multi-loop transfers; arrival is scored as arrival speed rather than orbit insertion. ROADMAP.md covers each of these.
+**Limits today.** There are no deep-space engine burns or multi-loop transfers, arrival is scored as arrival speed rather than orbit insertion, and the orbital elements are fitted for 1800–2050, so very late arrivals lose some accuracy. ROADMAP.md covers each of these.
+
+## The MAP tab
+
+A rotating 3D map of the useful work. Drag to rotate, pinch to zoom (star names appear as you zoom in), double-tap to reset.
+
+- **PLSR, star map:** every catalog star around the Sun with distance rings at 10, 20, 30 and 40 light-years. Recently mined routes are drawn in crimson, and the route your rig is optimising right now is drawn in amber, with its stars highlighted.
+- **NBLT, orbit map:** the planets' real orbits, with distances compressed so Mercury and Neptune both fit on screen. Recently mined missions are in crimson, and your rig's live mission plan is in amber, with each encounter labelled (e.g. `FLYBY JUPITER 2041`).
+
+Previews rendered from live node data: [star map](docs/map-preview-stars.png), [orbit map](docs/map-preview-orbits.png).
+
+The map loads from the selected coin's node (`/stars` + `/routes`, or `/planets` + `/missions`). Tap **[REFRESH]** after changing nodes. It isn't available for pool coins.
 
 ## Known limitations (good next steps)
 

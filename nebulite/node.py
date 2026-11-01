@@ -197,12 +197,8 @@ def mining_work():
         "height": template["height"],
         "mission": prob,
         "baseline": {"seq": base["seq"], "days": base["days"], "cost": round(base["cost"])},
-        "planets": [{"id": i, "name": p[0], "code": p[1], "a_au": p[2], "l0_deg": p[3],
-                     "gm": p[4], "radius_km": p[5]} for i, p in enumerate(T.PLANETS)],
-        "physics": {"mu_sun": T.MU_SUN, "au_per_day_to_kms": T.AU_PER_DAY_TO_KMS,
-                    "time_penalty_mps_per_year": T.TIME_PENALTY_MPS_PER_YEAR,
-                    "min_leg_days": T.MIN_LEG_DAYS, "flyby_safety": T.FLYBY_SAFETY,
-                    "min_flyby_vinf": T.MIN_FLYBY_VINF, "min_perihelion_au": T.MIN_PERIHELION_AU},
+        "planets": T.planets_json(),
+        "physics": T.physics_json(),
         "base_target": template["target"],
         "bonus_exponent": C.TRAJECTORY_BONUS_EXPONENT,
         "reward": template["txs"][0]["amount"],
@@ -267,6 +263,12 @@ def mining_submit():
 
 
 # ---- the mission log ----------------------------------------------------
+
+@app.get("/planets")
+def planets():
+    """Planet orbital elements and physics constants (for maps and miners)."""
+    return jsonify({"planets": T.planets_json(), "physics": T.physics_json()})
+
 
 @app.get("/missions")
 def missions():
