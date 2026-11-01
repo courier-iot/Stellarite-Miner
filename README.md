@@ -1,112 +1,266 @@
-# Stellarite Apps
+# Stellarite Miner
 
-A personal app store for Android. It lists the modules (apps) published in a GitHub account's releases, shows each repo's README, then downloads and installs the APKs. Debug/test build only, no Play Store or release signing.
+Two small cryptocurrencies built from scratch for learning, where mining does useful space work, plus a cyberpunk-styled Android app that mines them:
 
-> This code has not been compiled yet. Expect a few small fixes on the first Gradle sync.
+- **Pulsarite (PLSR)**: every block maps a short route between real nearby stars.
+- **Nebulite (NBLT)**: every block plans a spacecraft trajectory to an outer planet, using gravity-assist flybys to save fuel and travel time.
 
-## Run it
+**Stellarite Miner** mines both, and can also mine Bitcoin and other SHA-256d coins through mining pools. See [ROADMAP.md](ROADMAP.md) for what's next, including star movement and travel time.
 
-1. Open `StellariteApps/` in Android Studio (Koala or newer). It will sync Gradle and create the wrapper scripts.
-2. `DEFAULT_OWNER` in `app/src/main/java/com/stellarite/apps/Config.kt` is set to `courier-iot`. This is the built-in catalog every user sees first; change it there if the account ever moves.
-3. Run the `app` configuration on a device or emulator (Android 8.0+).
-4. The first time you install something, Android asks you to allow installs from Stellarite Apps. Control Core shows the clearance state.
+- **`node/`**: the Pulsarite full node (Python): blocks, signed transactions, star-route proof of work, automatic difficulty adjustment, peer sync, a mining API, a CLI wallet, and a reference miner.
+- **`nebulite/`**: the Nebulite full node, a separate coin with its own chain, addresses (`nblt…`) and port (5001), using trajectory proof of work.
+- **`android/`**: Kotlin app ("Stellarite Miner") with the Neon Pulsar theme. It mines Pulsarite through your node, or Bitcoin, Bitcoin Cash and other SHA-256d coins through any Stratum v1 pool, and keeps a ledger of everything you've mined.
+- **`.github/workflows/build.yml`**: runs both nodes' tests and builds the APK on every push. Tag a release (`v1.0`) and the APK is attached to it.
 
-## What shows up in the catalog
+> This is a teaching coin. The code is readable and tested, but it has not been audited. Don't treat PLSR as something with real monetary value.
 
-A repo appears when it is not a fork or archived, and its **latest release** has an `.apk` asset. Pre-releases and drafts are skipped. If a release has several APKs, one named `universal` or `release` is preferred.
+## How it works
 
-Tag your releases with the app's `versionName` (`v1.2.0` or `1.2.0` both work). Update detection compares the installed `versionName` against the latest tag. The status line reads `SYNCED · up-to-date/total MODULES`.
+Pulsarite uses **proof of useful work**. Every block must carry a route that starts at the Sun and visits 24 nearby stars, chosen unpredictably from the previous block's hash. Shorter routes make the block's hash target exponentially easier to hit, so miners compete on finding good routes, and the network builds up a map of efficient paths between stars as it goes.
 
-## Sources
+```
+ phone (Stellarite Miner)                    your computer (node.py)
+ ────────────────────────                    ───────────────────────
+ GET /mining/work?address=plsr…     ───►     picks this block's 24 stars
+                                    ◄───     { stars + positions, baseline }
+ optimise a route through the stars
+ POST /mining/route {route}         ───►     scores it: target × (baseline/length)^12
+                                    ◄───     { header prefix, easier target }
+ hash: sha256d(prefix + nonce) <= target ?
+   (keep shortening the route every 10 s)
+ POST /mining/submit {route, nonce} ───►     re-checks route + hash, adds block,
+                                              pays reward, adds route to the map
+```
 
-Besides the built-in **Home Archive** (shown as "Made by The Courier"), Control Core > Sources lets you paste a link:
+| Setting | Default | Where |
+|---|---|---|
+| Block reward | 50 PLSR, halving every 100,000 blocks | `node/config.py` |
+| Target block time | 30 seconds | `node/config.py` |
+| Difficulty retarget | every 10 blocks, max 4× change | `node/config.py` |
+| Starting difficulty | 2²⁰ hashes per block (~1M) at a baseline route | `PULSARITE_DIFFICULTY_BITS` env var |
+| Stars per block | 24 | `node/stars.py` |
+| Route bonus | target × (baseline ÷ route length)¹² | `ROUTE_BONUS_EXPONENT` in `node/config.py` |
+| Star catalog | ~50 nearby systems built in, or your own `stars.json` | `node/stars.py`, `node/tools/build_catalog.py` |
+| Smallest unit | 1 PLSR = 100,000,000 units | `node/config.py` |
+| Ledger model | account balances + per-address nonce | `node/chain.py` |
+| Fork choice | most cumulative work wins | `node/chain.py` |
 
-- `github.com/owner` adds every qualifying repo of an account or org.
-- `github.com/owner/repo` adds one repo.
-- **Stars** adds your starred repos (first 100; needs an Access Key).
-- An F-Droid-style repo address (F-Droid, IzzyOnDroid, others) opens that archive (see Archives): only the apps you tick join the catalog.
+## Quick start
 
-Sources can be switched off or removed, are included in Backup Vault snapshots, and are covered by Auto-Patch. F-Droid downloads are verified against the SHA-256 in the index, and your Access Key is only ever sent to api.github.com.
+### 1. Get the app
 
-## Downloads and alerts
+Push this repo to GitHub, open the **Actions** tab, and download `stellarite-miner-apk` from the latest run (or open `android/` in Android Studio and press Run). Install it; Android will ask you to allow installs from that source. The app isn't on Google Play, which doesn't allow on-device mining apps.
 
-- **Wi-Fi only downloads** (on by default): installers and archive indexes wait until you're on an unmetered connection. A held download shows WAITING FOR WI-FI with a DOWNLOAD ANYWAY button, and starts by itself when Wi-Fi returns. Background updates also wait for Wi-Fi. App details follow the same rule. Screenshots have their own switch (on by default): off means they always load.
-- **Update alerts** (on by default): when a module isn't patched automatically, a notification lists the updates (once per set of updates, not every check). Nothing installs on its own.
-- **No release yet:** Repos in your account that look like Android projects (Kotlin or Java, tagged `android` or `stellarite`, or with no language detected yet) and have no APK release show as greyed tiles ("In development"), only when no search or filter is active.
-- **F-Droid app pages:** description, categories, anti-features, screenshots, version history and license come from the verified index.
+### 2. Make a wallet
 
-## Suggested
+On the RIG tab, pick **PLSR** or **NBLT** and tap **[NEW WALLET]**. Back up the key it shows: anyone with it can spend your coins, and losing it loses them. One key gives you both a `plsr…` and an `nblt…` address, and it's the same format as `wallet.py`, so you can move it to a computer later (the backup screen shows the `wallet.json` to save).
 
-Under your modules on the Catalog page, a Suggested section offers the official F-Droid app. Its build comes from F-Droid's own signed index (the same checks as Archives), then goes to Android's installer; the button becomes OPEN, or UPDATE when a newer version exists. The home page never downloads the large index by surprise: until it has been synced once, the card shows INSTALL without a version, and on mobile data you are asked before the download. If F-Droid is already on the device (even from before Stellarite Apps), it moves out of Suggested into your module list, shows as Installed, and offers UPDATE when F-Droid's public API lists a newer version; the update itself still comes from the verified index. After that it is patched by Auto-Patch like any other module. The section is hidden while searching or filtering.
+### 3. Choose where the blockchain runs
 
-## Archives
+| Option | Best for | How |
+|---|---|---|
+| **Solo mode** | Trying it out, no computer at all | Tick **SOLO MODE** on the RIG tab, then **ENGAGE RIG** |
+| **Your computer** | Mining at home | Double-click `start-nebulite.bat` / `start-pulsarite.bat` (Windows) or run `./start-nebulite.sh` (Mac/Linux), then tap **[FIND NODE]** in the app |
+| **Cloud server** | Mining anywhere, inviting friends | Follow [DEPLOY.md](DEPLOY.md), then set NODE_URI to `https://your-domain/nebulite` |
 
-The ARCHIVES tab lists large open-source repositories. F-Droid is built in; any F-Droid-style source you add also appears. Opening one gives the whole index A to Z with sticky letters and a letter rail, search, app icons, and filters: fits this device (CPU and Android version), hide anti-features, category, updated, and sort. Tick apps and tap ADD to put them in your catalog.
+**Solo mode** runs the coin's blockchain inside the app: same rules, same blocks, stored on the phone. It's a network of one, so it's for learning and testing. When you're ready, set NODE_URI to a computer or cloud node and tap **[PUSH CHAIN TO NODE]**. The node adopts your chain if it's valid and longer than its own, and your coins come with it. (A brand-new node always accepts it; a node that has been mining on its own keeps whichever chain has more work, so push early.) Solo chains hold mined blocks only: to send coins to someone, push to a node first.
 
-On first open (or when the daily cache expires) the index is downloaded once. On mobile data you are asked first. The index is checked against the repository's signed `entry.jar` before use: F-Droid's signing key is built into the app; for other repos the key is remembered the first time and a change is refused. A repo with no signature file is usable but shown as UNSIGNED.
+**Start scripts** set up Python packages on first run, create a wallet if there isn't one, show your address, and start the node. They print the exact address to use in the app. You need Python 3 (on Windows, tick "Add python.exe to PATH" while installing it).
 
-## Module detail and README
+The app mines as a foreground service with a visible notification and a Stop button. It pauses automatically when:
+- the phone is hot (thermal status severe),
+- the battery is below 20% and unplugged,
+- "Only mine while charging" is on (the default) and the phone is unplugged.
 
-Under the release notes, the detail screen pulls the repo's README live from GitHub and renders it (headings, lists, code, quotes, tables, links). Images and raw HTML are skipped, relative links point at the repo, and long READMEs are trimmed with an "Open full README on GitHub" button.
+It uses half the CPU cores by default; you can change that with the CORES slider. The RIG tab shows your balance under the wallet address, from the solo chain or from the node.
 
-## Control Core (settings)
+### Running a node by hand (optional)
 
-- **Uplink**: Operator Handle (GitHub username) and Access Key (token). Blank handle, no key = the built-in catalog. Another handle = that account's public releases. A token = the owner's own repos, including private ones. Unauthenticated requests are limited to 60/hour per device; a token raises that. The token stays in the app's private storage.
-- **Visor Skin**: Stellarite Cyber (graphite, cyan, crimson alerts) or Brassworks Steampunk (leather, brass, copper, serif type).
-- **Auto-Patch Protocol**: master switch.
-  - ON: every module patches itself except those you untick in the Patch Roster.
-  - OFF: the Patch Roster opens so you can tick the few modules that should still patch themselves.
-- **Deployment Core**: Deploy Clearance (install permission) and Payload Cache purge.
-- **Commit & Sync** saves the Uplink fields and reloads the catalog.
+```bash
+cd node                      # or: cd nebulite
+pip install -r requirements.txt
+python node.py               # Pulsarite on port 5000, Nebulite on 5001
+python wallet.py new         # a computer wallet, if you prefer one
+python wallet.py balance
+python wallet.py send plsr<recipient-address> 12.5
+python miner.py --address plsr…   # mine from the computer too
+```
 
-## Backup Vault
+## Useful work: star routes
 
-Control Core has a **Backup Vault** panel that records which modules (and versions) you have installed, plus your skin and Patch Roster, so you can restore them on another device. It never stores your Access Key or any app data.
+**The problem.** Each block's 24 stars are picked from the previous block's hash, so nobody can work on a block's route before that block exists. The route is an open path: it starts at the Sun and visits every star once. Distances are computed in whole milli-light-years so every node gets the exact same answer.
 
-- **File target:** SNAPSHOT NOW saves `stellarite-snapshot.json` through the system file picker (Drive, Syncthing, USB, NAS, anywhere). RESTORE opens a file you pick. No account or server involved.
-- **GitHub target:** snapshots go to `snapshot.json` in a private repo named `stellarite-backup` in the account that owns your Access Key. Every save is a commit, so you get history for free. Auto-Snapshot saves after installs, removals, skin and roster changes.
-- Each device only rewrites its own section of the file, so two devices never overwrite each other. Restore lets you pick which device's snapshot to use.
-- **Restore** shows each module as MISSING, INSTALLED or "HAS vX" and ticks what needs restoring. "As recorded" installs the exact recorded release (found by its tag); "Latest" installs the newest release. Android still asks you to confirm each install, and Deploy Clearance must be granted first.
+**The score.** Every node computes a greedy "nearest star next" route as the baseline. If your route is 10% shorter, your hash target is (1/0.9)¹² ≈ 3.5× easier. In testing, the optimiser beats the baseline by about 11% on average (up to ~20%), making blocks around 6× easier to find. A miner who only hashes, without optimising, is at a real disadvantage.
 
-### Access Key permissions for GitHub backup
+**Why keep hashing at all?** Route quality alone can't set a steady block time, and the best route for a block would quickly become a known answer that every miner submits. The hash keeps blocks unpredictable and lets difficulty adjust; the route bonus makes optimisation the thing that wins.
 
-The one thing the GitHub target strictly needs is **Contents read and write on the `stellarite-backup` repo**.
+**On the phone.** The rig optimises each new block's route for about 2.5 seconds (2-opt and Or-opt with random restarts), starts hashing, then keeps refining the route every 10 seconds. The RIG screen shows the live route, e.g. `ROUTE 24★ · 218.6 LY · 11.8% SHORTER THAN GREEDY`, and the ledger records routes mapped and your best route.
 
-- Safest: create an empty private repo named `stellarite-backup` yourself (tick "Add a README"), then use a fine-grained token limited to that repo with Contents read and write. (A token that also lists your repos for the catalog needs read access to those too.)
-- Easiest: a classic token with the `repo` scope also lets the app create the repo for you on the first snapshot.
-- If the app can't create the repo with your key, it says so and tells you to create it by hand. I could not confirm from GitHub's docs whether fine-grained tokens are allowed to create personal repos, so treat creation as a convenience, not something to rely on.
+**The map.** `GET /routes` lists recent blocks' routes by star name with their lengths and improvement, and `GET /stars` shows the catalog in use.
 
-Known limits: Android will not install an older version over a newer one, so "as recorded" can't downgrade a module. Only modules installed through Stellarite Apps are recorded.
+**Using real star data.** The built-in catalog has ~50 well-known nearby systems with approximate positions. For a serious network, build a catalog from the HYG database (positions from the Hipparcos and Gaia surveys):
 
-## About other people's repositories
+```bash
+python tools/build_catalog.py hygdata_v41.csv --max-ly 50 -o stars.json
+```
 
-Stellarite Apps was made mainly as a launcher for its maker's own apps. It is not an app store replacement.
+Every node must use the same catalog (`GET /info` shows a `catalog_id` to compare), and changing it starts a new chain, so delete each node's `data/` folder. With a larger catalog you can raise `STARS_PER_PROBLEM` for harder, more useful routing problems.
 
-The F-Droid app repository belongs to the F-Droid project, and IzzyOnDroid's belongs to its maintainer. Stellarite Apps does not host, copy or change their apps. It only gives you a way into their public indexes from one place and downloads the APKs from their servers, checking signatures and checksums as described above. It is independent software and is not made by, affiliated with or endorsed by F-Droid or IzzyOnDroid. If you would rather use their official app, get F-Droid from https://f-droid.org.
+**Be honest about the value.** Today these routes are a demonstration: real mission planning has to account for travel time, fuel and star motion, not just straight-line distance. The point is the framework. The network turns mining effort into solved routing problems that anyone can check, and the problem can be swapped for something richer later.
 
-Stellarite Apps can install any APK from any source you add. It does not review third-party apps, so only add sources you trust. The software is provided as is, without warranty (see LICENSE).
+## Mining other coins (Bitcoin and friends)
 
-## Auto-Patch details
+The coin chips at the top of the RIG screen switch between:
 
-A background job runs about every 6 hours on a network connection. Installs go through Android's PackageInstaller, so on Android 12+ updates to apps this store originally installed can complete without a prompt. Where Android still requires confirmation (older versions, or a first install), you get a notification to tap. Enabling Auto-Patch asks for notification permission on Android 13+.
+| Chip | Coin | Connects to |
+|---|---|---|
+| PLSR | Pulsarite | your Pulsarite node (`http://…:5000`) |
+| NBLT | Nebulite | your Nebulite node (`http://…:5001`) |
+| BTC | Bitcoin | a Stratum v1 pool |
+| BCH | Bitcoin Cash | a Stratum v1 pool |
+| SHA | any other SHA-256d coin | a Stratum v1 pool |
 
-## How the Access Key is stored
+For pools, enter:
+- **POOL_URI**: `stratum+tcp://host:port` (or `stratum+ssl://` for TLS), from your pool's "getting started" page.
+- **WORKER**: usually `yourPayoutAddress.workerName`; check the pool's docs.
+- **POOL_PASS**: usually `x`. Many pools let you request a share difficulty here, such as `d=0.01`. Phones need a low difficulty to find shares at all.
 
-The key is encrypted with an AES-GCM key held in the Android Keystore and saved in its own file, which is excluded from Android backups and device transfers. A key saved in plain text by an earlier version is encrypted the first time it is read. If the Keystore key is ever lost (for example after a restore to a new phone), the app simply asks for the Access Key again. The key is only ever sent to api.github.com.
+Settings are saved separately for each coin.
 
-## Known limits
+**Be realistic about Bitcoin.** Bitcoin's network runs on industrial ASIC machines that are many millions of times faster than a phone. A phone (roughly 1–10 MH/s) will submit shares to a pool and show up on its dashboard, but the payout will round to zero and most pools never reach their minimum payout for a phone. Treat it as a way to see real pool mining work, not as income.
 
-- An app is only recognised as installed after it has been installed through Stellarite Apps once (the package name is read from the downloaded APK).
-- Updates only install over apps signed with the same key.
-- F-Droid modules cannot be downgraded. Index signature checking uses Android's JAR verifier; if a repo signs with an algorithm Android refuses, the sync fails rather than skipping the check.
-- Icons in Archives load from the repository over the network (via Coil).
-- Stars are capped at the first 100.
-- App icons are generic glyphs, since GitHub releases don't carry artwork.
-- Fonts are system fonts (monospace/sans for Cyber, serif for Steampunk); IBM Plex can be bundled later.
+Only SHA-256d coins are supported. Coins built for CPU mining, like Monero (RandomX), would need a separate hashing engine; that's a good next step if you want a phone to earn something.
 
-## Layout
+## The ledger
 
-- `data/` GitHub client, models, installer, local prefs, snapshot model and vault (backup)
-- `patch/` Auto-Patch worker, install result receiver, notifications
-- `ui/` view model, Compose screens (Catalog, Detail, Settings, Patch Roster sheet), Markdown renderer, theme and shared components
-- `MainActivity.kt` navigation between Catalog, Detail and Control Core
+The **LEDGER** tab records every mining session on the phone: which coin, how long, how many hashes, and how many blocks or shares were accepted or rejected. Lifetime totals are shown per coin.
+
+- For **Pulsarite**, it also shows coins earned, since the app knows each block's reward.
+- For **pools**, earnings are decided and paid by the pool, so the ledger shows shares; check your pool's dashboard for balances.
+
+The ledger is saved on the phone every 30 seconds while mining and when you stop. **[WIPE LEDGER]** clears it (it never affects coins you've earned).
+
+## Theme
+
+The app uses the Neon Pulsar look: pure black, neon crimson (#DC143C), amber highlights, HUD corner brackets, pulsing rings and faint scanlines. The GitHub build downloads the Orbitron and Share Tech Mono fonts (SIL Open Font License) into `android/app/src/main/assets/fonts/`. Builds without them use the phone's built-in fonts. Colors live in `Theme.kt` and `res/values/colors.xml`.
+
+## Troubleshooting
+
+**The app can't reach the node ("can't reach … Is the node running?")**
+1. Start the node on your computer: `cd node && python node.py` for Pulsarite, `cd nebulite && python node.py` for Nebulite. It prints the exact address to use, e.g. `set NODE_URI to http://192.168.40.10:5001`.
+2. Put the phone on the same Wi-Fi as the computer, then tap **[FIND NODE]** on the RIG tab, or type that address.
+3. Windows: when Python first runs, allow it through the firewall on **private networks**. macOS: allow incoming connections for Python.
+4. Guest networks and some mesh Wi-Fi systems block devices from talking to each other. Use your main network.
+
+**Solo mode says my chain wasn't adopted.** The node already has a chain with more work than yours (it has been mining on its own). Push to a fresh node, or keep mining that node directly.
+
+**ENGAGE RIG does nothing.** The app explains why right under the button. Usually the wallet address is incomplete: run `python wallet.py new` in the coin's folder and paste the whole address (52 characters, `plsr…` or `nblt…`).
+
+**Mining shows "PAUSED: NOT CHARGING".** CHARGING ONLY is on by default. Plug in, or untick it.
+
+**A grey title bar appears at the top of the app.** An older version's file is still in your repo. When updating, replace the repo's contents with the new zip rather than copying over it, so deleted files go away. (This version prevents that particular file from causing problems.)
+
+## Running more than one node
+
+```bash
+# second machine (or a second port)
+python node.py --port 5001 --data ./data2 \
+  --peer http://192.168.1.10:5000 --public-url http://192.168.1.11:5001
+```
+
+Nodes forward new blocks and transactions to each other and re-sync every 30 seconds, adopting whichever valid chain has the most work.
+
+## Make it your own
+
+1. **Name and economics:** edit `node/config.py` (`COIN_NAME`, `TICKER`, `ADDRESS_PREFIX`, reward, block time, genesis message).
+2. **App:** match those in `android/app/src/main/java/com/example/stellariteminer/Coin.kt` and rename the app in `res/values/strings.xml`. To change the package name, update `namespace` and `applicationId` in `android/app/build.gradle.kts` and move the source folder.
+3. **Start fresh:** changing `config.py` changes the genesis block, so delete `node/data/` on every node.
+4. **Sign releases properly:** CI signs the APK with Android's debug key so it installs out of the box. Before sharing it widely, create your own keystore and set it as the release `signingConfig`.
+
+## API reference
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/info` | height, tip hash, current target, peers |
+| GET | `/chain`, `/blocks/<height>` | block data |
+| GET | `/balance/<address>` | balance and next nonce |
+| POST | `/tx` | submit a signed transaction |
+| GET | `/mining/work?address=…` | get a job: this block's stars, baseline route, base target |
+| POST | `/mining/route` | `{ "job_id", "route" }` → header prefix and the route's target |
+| POST | `/mining/submit` | `{ "job_id", "route", "nonce" }` |
+| GET | `/routes?limit=20` | the route map: recent blocks' routes, lengths, improvement |
+| GET | `/stars` | the star catalog in use |
+| POST | `/chain/import` | offer a whole chain (e.g. from solo mode); adopted if valid and longer |
+
+Nebulite's node has the same transaction, balance, chain and peer endpoints, plus `GET /mining/work`, `POST /mining/trajectory` (`{job_id, seq, days}`), `POST /mining/submit` (`{job_id, seq, days, nonce}`), `GET /missions` and `GET /planets` (orbital elements and physics constants).
+| GET/POST | `/peers` | list / add peers |
+| POST | `/blocks` | peers announce new blocks |
+
+## Tests
+
+```bash
+cd node && python -m unittest discover tests -v
+```
+
+The tests cover rewards, transfers, fees, replay and overspend protection, tampered signatures, invalid proof-of-work, inflated coinbases, difficulty adjustment, chain reorganisation, persistence, star-route validation (routes must cover the block's stars, are bound into the hash, and shorter routes get easier targets), the route map, and the full HTTP mining flow.
+
+The app's pool-mining code was checked against a real Bitcoin block (block 125552's header hashes correctly) and against a test Stratum pool that independently verified every submitted share.
+
+## Nebulite: spacecraft trajectories
+
+Nebulite is a separate coin with its own chain, wallet addresses (`nblt…`), node and default port (5001). Run it alongside Pulsarite or on its own:
+
+```bash
+cd nebulite
+pip install -r requirements.txt
+python node.py --port 5001 --data ./data
+python wallet.py new                 # prints your nblt… address
+python miner.py --address nblt…      # optional: mine from the computer
+```
+
+In the app, pick the **NBLT** chip, enter `http://<your computer's IP>:5001` and your `nblt…` address.
+
+**The problem.** Each block's mission comes from the previous block's hash: get a spacecraft from Earth to Jupiter, Saturn, Uranus or Neptune, launching inside a 4-year window somewhere in 2025–2039, within a maximum flight time (8 to 30 years, depending on the target). Miners choose which planets to fly past on the way (Venus, Earth, Mars, and Jupiter or Saturn when they're on the way) and the date of each encounter.
+
+**The cost** is what a mission planner cares about, in m/s of rocket effort:
+- departure speed from Earth (what the launcher must supply)
+- fuel burned at each flyby: making up speed differences, or turning harder than the planet's gravity allows at a safe distance (1.1 planet radii)
+- arrival speed at the target (what must be shed to stop)
+- travel time: each year of flight counts as 250 m/s
+
+Planets follow **real orbits**: JPL's approximate Keplerian elements with their slow drift over time, giving elliptical, tilted orbits in 3D (valid 1800–2050). Checked against reality, the model puts Mars-through-Neptune oppositions within a day of the real dates and Mars' 2003 close approach within 0.0003 AU. Flown on their actual dates, Voyager 1 and 2 need almost no fuel at their flybys, just as in reality.
+
+Each leg between planets is solved with Lambert's problem, the standard tool for "leave here on day A, arrive there on day B". The solver was checked against step-by-step orbit integration (agreement to 1e-11) and textbook Hohmann transfers. It refuses paths that dive inside Mercury's orbit, and flybys slower than 1 km/s, which aren't real gravity assists.
+
+**The score.** Every node computes the best *direct* transfer on a coarse grid as the baseline. A trajectory 15% cheaper than that makes the hash target (1/0.85)¹² ≈ 7× easier. In testing, the optimisers found Jupiter-assisted routes to Saturn and Uranus 14–20% cheaper than going direct, the same strategy the Voyager and Cassini missions used. Jupiter missions gain less (2–5%), because there's little to fly past on the way.
+
+**Fair checking.** Costs involve floating-point maths, which can differ in the last digit between computers. Blocks therefore carry their claimed cost, and nodes accept it within 1 m/s of their own result, so rounding can never split the network. (The phone's Kotlin physics matches the node's Python to 0.000005 m/s across 3,600 test trajectories.)
+
+**On the phone.** The rig plans each new mission for about 3 seconds, searching every flyby sequence with up to 2 flybys, then keeps refining every 10 seconds while it hashes. The HUD shows the live plan, e.g. `MISSION E-J-S · 11.53 KM/S · 8.6 YR · 20.7% CHEAPER THAN DIRECT`, and the ledger records missions planned and your best mission.
+
+**The mission log.** `GET /missions` lists recent blocks' trajectories: planet path, encounter days, Δv, years and improvement.
+
+**Limits today.** There are no deep-space engine burns or multi-loop transfers, arrival is scored as arrival speed rather than orbit insertion, and the orbital elements are fitted for 1800–2050, so very late arrivals lose some accuracy. ROADMAP.md covers each of these.
+
+## The MAP tab
+
+A rotating 3D map of the useful work. Drag to rotate, pinch to zoom (star names appear as you zoom in), double-tap to reset.
+
+- **PLSR, star map:** every catalog star around the Sun with distance rings at 10, 20, 30 and 40 light-years. Recently mined routes are drawn in crimson, and the route your rig is optimising right now is drawn in amber, with its stars highlighted.
+- **NBLT, orbit map:** the planets' real orbits, with distances compressed so Mercury and Neptune both fit on screen. Recently mined missions are in crimson, and your rig's live mission plan is in amber, with each encounter labelled (e.g. `FLYBY JUPITER 2041`).
+
+Previews rendered from live node data: [star map](docs/map-preview-stars.png), [orbit map](docs/map-preview-orbits.png).
+
+The map loads from the selected coin's node (`/stars` + `/routes`, or `/planets` + `/missions`). Tap **[REFRESH]** after changing nodes. It isn't available for pool coins.
+
+## Known limitations (good next steps)
+
+- Transactions are listed in a block rather than committed in a Merkle tree, so light clients can't verify inclusion.
+- Peers sync by downloading the whole chain, which is fine for thousands of blocks but not millions.
+- No HTTPS or authentication on the node; keep it on your home network or put it behind a reverse proxy.
+- SHA-256 is simple but favours ASICs and GPUs. If you open the network to strangers, phones won't be competitive.
+- Pool mining keeps each job's timestamp fixed rather than rolling it, which is fine at phone speeds.
+
+## License
+
+MIT

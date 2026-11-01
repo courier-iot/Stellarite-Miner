@@ -293,6 +293,30 @@
                         android:textSize="16sp" />
 
                     <TextView
+                        android:id="@+id/alert"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:background="@drawable/cell_bg"
+                        android:lineSpacingExtra="2dp"
+                        android:padding="12dp"
+                        android:textColor="@color/crimson_light"
+                        android:textSize="13sp"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/setupGuide"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:background="@drawable/cell_bg"
+                        android:lineSpacingExtra="3dp"
+                        android:padding="12dp"
+                        android:textColor="@color/text"
+                        android:textSize="12sp"
+                        android:visibility="gone" />
+
+                    <TextView
                         android:id="@+id/coinNote"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -300,17 +324,47 @@
                         android:lineSpacingExtra="2dp"
                         android:textColor="@color/muted"
                         android:textSize="12sp" />
+                    <CheckBox
+                        android:id="@+id/soloMode"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:minHeight="48dp"
+                        android:text="SOLO MODE · run the blockchain on this phone (no computer needed)"
+                        android:textColor="@color/text"
+                        android:textSize="13sp" />
 
-                    <TextView
-                        android:id="@+id/urlLabel"
-                        android:layout_width="wrap_content"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="16dp"
-                        android:labelFor="@+id/url"
-                        android:letterSpacing="0.12"
-                        android:text="NODE_URI"
-                        android:textColor="@color/muted"
-                        android:textSize="11sp" />
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/urlLabel"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:labelFor="@+id/url"
+                            android:letterSpacing="0.12"
+                            android:text="NODE_URI"
+                            android:textColor="@color/muted"
+                            android:textSize="11sp" />
+
+                        <Button
+                            android:id="@+id/findNode"
+                            style="?android:attr/borderlessButtonStyle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="44dp"
+                            android:letterSpacing="0.15"
+                            android:minWidth="0dp"
+                            android:paddingStart="8dp"
+                            android:paddingEnd="0dp"
+                            android:text="[FIND NODE]"
+                            android:textColor="@color/amber"
+                            android:textSize="12sp" />
+                    </LinearLayout>
 
                     <EditText
                         android:id="@+id/url"
@@ -346,6 +400,82 @@
                         android:paddingEnd="4dp"
                         android:textColor="@color/text"
                         android:textSize="13sp" />
+
+                    <LinearLayout
+                        android:id="@+id/walletRow"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <Button
+                            android:id="@+id/newWallet"
+                            style="?android:attr/borderlessButtonStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="44dp"
+                            android:layout_weight="1"
+                            android:letterSpacing="0.1"
+                            android:text="[NEW WALLET]"
+                            android:textColor="@color/amber"
+                            android:textSize="11sp" />
+
+                        <Button
+                            android:id="@+id/backupKey"
+                            style="?android:attr/borderlessButtonStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="44dp"
+                            android:layout_weight="1"
+                            android:letterSpacing="0.1"
+                            android:text="[BACKUP KEY]"
+                            android:textColor="@color/amber"
+                            android:textSize="11sp" />
+
+                        <Button
+                            android:id="@+id/importKey"
+                            style="?android:attr/borderlessButtonStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="44dp"
+                            android:layout_weight="1"
+                            android:letterSpacing="0.1"
+                            android:text="[IMPORT KEY]"
+                            android:textColor="@color/amber"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/balance"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/amber"
+                        android:textSize="12sp" />
+
+                    <LinearLayout
+                        android:id="@+id/soloRow"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:visibility="gone">
+
+                        <Button
+                            android:id="@+id/pushChain"
+                            style="?android:attr/borderlessButtonStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="44dp"
+                            android:layout_weight="1"
+                            android:letterSpacing="0.1"
+                            android:text="[PUSH CHAIN TO NODE]"
+                            android:textColor="@color/amber"
+                            android:textSize="11sp" />
+
+                        <Button
+                            android:id="@+id/resetSolo"
+                            style="?android:attr/borderlessButtonStyle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="44dp"
+                            android:letterSpacing="0.1"
+                            android:text="[RESET SOLO]"
+                            android:textColor="@color/crimson_light"
+                            android:textSize="11sp" />
+                    </LinearLayout>
 
                     <LinearLayout
                         android:id="@+id/passGroup"

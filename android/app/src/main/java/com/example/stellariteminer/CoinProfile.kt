@@ -23,27 +23,30 @@ class CoinProfile(
     val kind: WorkKind = WorkKind.NONE,
     val addressPrefix: String = "",     // own coins: required address prefix
     val addressLength: Int = 0,
+    val nodeFolder: String = "",        // own coins: folder in the repo that holds node.py
+    val defaultPort: Int = 0,
 ) {
     companion object {
         val ALL = listOf(
             CoinProfile(
                 id = "plsr", name = "Pulsarite", ticker = Coin.TICKER, protocol = Protocol.NODE,
-                urlHint = "http://192.168.1.10:5000",
+                urlHint = "http://<computer-ip>:5000",
                 userLabel = "WALLET_ADDR", userHint = "${Coin.ADDRESS_PREFIX}…",
                 note = "Mines your own coin through your node. Every block needs a route through 24 nearby " +
                     "stars: the rig keeps shortening it while it hashes, and shorter routes make " +
                     "blocks easier to win. Blocks pay straight to your address.",
                 kind = WorkKind.STAR_ROUTES, addressPrefix = Coin.ADDRESS_PREFIX, addressLength = Coin.ADDRESS_LENGTH,
+                nodeFolder = "node", defaultPort = 5000,
             ),
             CoinProfile(
                 id = "nblt", name = "Nebulite", ticker = NebuliteCoin.TICKER, protocol = Protocol.NODE,
-                urlHint = "http://192.168.1.10:5001",
+                urlHint = "http://<computer-ip>:5001",
                 userLabel = "WALLET_ADDR", userHint = "${NebuliteCoin.ADDRESS_PREFIX}…",
                 note = "Mines Nebulite through its own node. Every block needs a spacecraft trajectory " +
                     "from Earth to an outer planet: the rig searches gravity-assist flybys for the " +
                     "least fuel and travel time, and cheaper missions make blocks easier to win.",
                 kind = WorkKind.TRAJECTORIES, addressPrefix = NebuliteCoin.ADDRESS_PREFIX,
-                addressLength = NebuliteCoin.ADDRESS_LENGTH,
+                addressLength = NebuliteCoin.ADDRESS_LENGTH, nodeFolder = "nebulite", defaultPort = 5001,
             ),
             CoinProfile(
                 id = "btc", name = "Bitcoin", ticker = "BTC", protocol = Protocol.STRATUM,

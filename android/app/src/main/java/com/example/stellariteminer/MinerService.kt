@@ -177,6 +177,15 @@ class MinerService : Service() {
                 val needWork = eng.job == null || node.hasNewWork() || eng.exhausted === eng.job ||
                     now - lastFetch > WORK_REFRESH_MS
                 if (reason == null && needWork) {
+                    if (eng.job == null) {
+                        // first work (or after an error): say what we're doing while it's prepared
+                        val where = if (prefs.isSolo) "SOLO CHAIN" else "LINKING NODE"
+                        status = status.copy(message = when (prefs.coin.kind) {
+                            WorkKind.STAR_ROUTES -> "$where · OPTIMISING STAR ROUTE…"
+                            WorkKind.TRAJECTORIES -> "$where · PLANNING MISSION…"
+                            WorkKind.NONE -> "LINKING POOL…"
+                        })
+                    }
                     val job = node.getWork()
                     eng.job = job
                     lastFetch = now
@@ -186,7 +195,7 @@ class MinerService : Service() {
             } catch (e: InterruptedException) {
                 break
             } catch (e: Exception) {
-                status = status.copy(message = "LINK_ERROR: ${e.message ?: e.javaClass.simpleName}")
+                status = status.copy(message = "LINK_ERROR: ${friendlyError(e, prefs.url(prefs.coinId))} Retrying…")
                 eng.job = null
                 try { Thread.sleep(5000) } catch (ie: InterruptedException) { break }
             }

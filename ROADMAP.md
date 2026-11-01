@@ -35,6 +35,7 @@ Today: planets on circular, flat orbits; Lambert transfers between planets; patc
 - [ ] **Travel time as a mission parameter.** Travel time is already scored, as a fixed 250 m/s per year. Make the trade-off part of each mission instead (crewed missions value speed, robotic ones value fuel) and report launch and arrival dates in plain calendar terms.
   - [ ] Per-mission `time_penalty` and `max_tof` chosen from the block hash, across a range of mission types.
   - [ ] Show arrival dates on the HUD and in `/missions`.
+- [ ] **More varied missions.** Blocks whose launch windows overlap often share the same best trajectory, so known solutions can be reused. Vary more per block (destinations including asteroids and moons, arrival-date limits, time penalties) so each block is a genuinely new problem.
 - [ ] **Multi-revolution transfers and deep-space manoeuvres.** Allow legs that loop around the Sun more than once, plus engine burns mid-leg. Real missions need these: Cassini's two Venus flybys use a resonant loop.
 - [ ] **Arrival into orbit.** Score the burn needed to enter a capture orbit at the target (a periapsis height and eccentricity), not just the arrival speed.
 - [ ] **Realistic flyby limits.** Use per-planet minimum altitudes, larger safety margins at Jupiter for radiation, and avoid flying through atmospheres.
@@ -43,6 +44,9 @@ Today: planets on circular, flat orbits; Lambert transfers between planets; patc
 - [ ] **Deterministic maths for consensus.** Costs are currently checked within 1 m/s, so tiny floating-point differences between computers can't split the chain. Before running a public network, switch to a portable, correctly rounded maths library (or fixed-point arithmetic) so every node computes the identical number.
 
 ## Both coins
+
+- [ ] **Send coins from the app.** The app wallet can receive and mine; add ECDSA signing (secp256k1, as wallet.py does) so it can send transactions to a node too.
+- [ ] **Merge solo chains.** Today a pushed solo chain wins only if it has more work than the node's. Pools of solo miners, or reorganising onto the node's chain while keeping your coins, would avoid losing solo blocks.
 
 - [ ] **Independent expert review.** Have an astrodynamicist check the physics against established tools (NASA's GMAT, ESA's pykep) before claiming results are mission-grade.
 - [ ] **Open science data.** Publish the route map and mission log as downloadable CSV/JSON under an open license (CC BY 4.0), with a stable public API.
@@ -60,3 +64,5 @@ Today: planets on circular, flat orbits; Lambert transfers between planets; patc
 - [x] Multi-coin app with a mining ledger
 - [x] Nebulite: real 3D planet motion from JPL elements, validated against oppositions and the Voyager missions
 - [x] MAP tab: interactive 3D star map and orbit map
+- [x] Solo mode: both blockchains run inside the app; phone-mined chains are accepted by the Python nodes and can be pushed with `/chain/import`
+- [x] In-app wallet compatible with wallet.py; start scripts for Windows/Mac/Linux; Docker + Caddy cloud deployment

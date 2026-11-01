@@ -1,0 +1,42 @@
+# Runs both coin nodes behind Caddy, which adds HTTPS automatically.
+#   cp .env.example .env    (set DOMAIN)
+#   docker compose up -d --build
+# Phones then use:  https://<DOMAIN>/pulsarite  and  https://<DOMAIN>/nebulite
+services:
+  pulsarite:
+    build: ../node
+    restart: unless-stopped
+    environment:
+      PORT: "5000"
+    volumes:
+      - pulsarite-data:/data
+
+  nebulite:
+    build: ../nebulite
+    restart: unless-stopped
+    environment:
+      PORT: "5001"
+    volumes:
+      - nebulite-data:/data
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-:80}    # no domain: plain HTTP on port 80
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - pulsarite
+      - nebulite
+
+volumes:
+  pulsarite-data:
+  nebulite-data:
+  caddy-data:
+  caddy-config:

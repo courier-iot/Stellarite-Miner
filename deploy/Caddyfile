@@ -1,0 +1,16 @@
+# With DOMAIN set (e.g. nodes.example.com), Caddy gets a free HTTPS certificate automatically.
+# Without it, the nodes are served over plain HTTP on port 80 at the server's IP address.
+{$DOMAIN} {
+	request_body {
+		max_size 64MB
+	}
+	handle_path /pulsarite/* {
+		reverse_proxy pulsarite:5000
+	}
+	handle_path /nebulite/* {
+		reverse_proxy nebulite:5001
+	}
+	handle {
+		respond "Stellarite nodes are running. Use /pulsarite or /nebulite in the app." 200
+	}
+}

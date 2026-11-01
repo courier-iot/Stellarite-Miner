@@ -3,6 +3,7 @@
 Run:  python node.py --port 5000 --data ./data [--peer http://other-node:5000]
 """
 import argparse
+import os
 import json
 import secrets
 import threading
@@ -18,6 +19,7 @@ from chain import (Blockchain, ValidationError, block_hash, effective_target, he
                    next_target, route_score, tx_sender, work)
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024   # room for imported chains
 lock = threading.RLock()
 chain: Blockchain = None
 peers = set()
@@ -101,6 +103,30 @@ def info():
 def get_chain():
     with lock:
         return jsonify(chain.blocks)
+
+
+@app.post("/chain/import")
+def import_chain():
+    """Adopt a whole chain (e.g. one mined in the app's solo mode) if it's valid and has more work.
+
+    Same rule as syncing from a peer: the valid chain with the most cumulative work wins.
+    """
+    candidate = request.get_json(silent=True)
+    if not isinstance(candidate, list) or not candidate:
+        return err("send the chain as a JSON list of blocks")
+    with lock:
+        before = chain.tip["height"]
+        adopted = chain.replace_chain(candidate)
+        if adopted:
+            jobs.clear()
+        height = chain.tip["height"]
+    if not adopted:
+        return jsonify({"ok": True, "adopted": False, "height": height,
+                        "reason": "not adopted: the chain is invalid, starts from a different genesis "
+                                  "block, or doesn't have more total work than this node's chain"})
+    print(f"[import] adopted imported chain: height {before} -> {height}")
+    broadcast("/blocks", chain.tip)
+    return jsonify({"ok": True, "adopted": True, "height": height})
 
 
 @app.get("/blocks/<int:height>")
@@ -274,14 +300,37 @@ def star_catalog():
                     "count": len(stars.CATALOG), "stars": stars.CATALOG})
 
 
+def lan_addresses():
+    """This computer's local-network IPv4 addresses (what a phone on the same Wi-Fi should use)."""
+    import socket
+    found = []
+    try:  # the address the OS would use to reach the internet (no packets are sent)
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("10.255.255.255", 1))
+        found.append(s.getsockname()[0])
+        s.close()
+    except OSError:
+        pass
+    try:
+        for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+            if ip not in found:
+                found.append(ip)
+    except OSError:
+        pass
+    return [ip for ip in found if not ip.startswith("127.")]
+
+
 def main():
     global chain, self_url
     ap = argparse.ArgumentParser(description=f"{C.COIN_NAME} node")
-    ap.add_argument("--host", default="0.0.0.0")
-    ap.add_argument("--port", type=int, default=5000)
-    ap.add_argument("--data", default="./data", help="where chain.json is stored")
-    ap.add_argument("--peer", action="append", default=[], help="peer node URL (repeatable)")
-    ap.add_argument("--public-url", help="URL other nodes use to reach this one")
+    env = os.environ   # every option can also come from the environment (handy for Docker)
+    ap.add_argument("--host", default=env.get("HOST", "0.0.0.0"))
+    ap.add_argument("--port", type=int, default=int(env.get("PORT", 5000)))
+    ap.add_argument("--data", default=env.get("DATA_DIR", "./data"), help="where chain.json is stored")
+    ap.add_argument("--peer", action="append",
+                    default=[p for p in env.get("PEERS", "").split(",") if p.strip()],
+                    help="peer node URL (repeatable; env PEERS is comma-separated)")
+    ap.add_argument("--public-url", default=env.get("PUBLIC_URL"), help="URL other nodes use to reach this one")
     args = ap.parse_args()
 
     chain = Blockchain(args.data)
@@ -296,7 +345,17 @@ def main():
     threading.Thread(target=sync_loop, daemon=True).start()
     print(f"{C.COIN_NAME} node on {args.host}:{args.port}, height {chain.tip['height']}, "
           f"star catalog: {stars.CATALOG_SOURCE} ({len(stars.CATALOG)} stars, id {stars.CATALOG_ID})")
-    app.run(host=args.host, port=args.port, threaded=True)
+    ips = lan_addresses()
+    if ips:
+        print("Phones on the same Wi-Fi: set NODE_URI to " +
+              " or ".join(f"http://{ip}:{args.port}" for ip in ips) + "  (or tap [FIND NODE] in the app)")
+        print("If the phone can't connect, allow Python through your firewall on private networks.")
+    try:
+        from waitress import serve   # production-grade server when installed (pip install waitress)
+        print("Serving with waitress")
+        serve(app, host=args.host, port=args.port, threads=16)
+    except ImportError:
+        app.run(host=args.host, port=args.port, threaded=True)
 
 
 if __name__ == "__main__":

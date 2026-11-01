@@ -37,6 +37,14 @@ class MapPage(
             loadedFor = ""
             return
         }
+        if (prefs.isSolo) { loadSolo(coin); return }
+        if (url.isEmpty()) {
+            title.text = if (coin.kind == WorkKind.STAR_ROUTES) "STAR_MAP" else "ORBIT_MAP"
+            legend.text = "> NO NODE ADDRESS YET.\n> On the RIG tab, start the ${coin.name} node on your computer and tap [FIND NODE]."
+            view.setScene(emptyList(), emptyList(), emptyList(), "")
+            loadedFor = ""
+            return
+        }
         if (!force && key == loadedFor) { refreshLive(); return }
         if (loading) return
         loading = true
@@ -54,12 +62,12 @@ class MapPage(
                 }
                 null
             } catch (e: Exception) {
-                e.message ?: e.javaClass.simpleName
+                friendlyError(e, url)
             }
             activity.runOnUiThread {
                 loading = false
                 if (result != null) {
-                    legend.text = "> MAP LINK FAILED · $result\n> Check the node address on the RIG tab, then tap [REFRESH]."
+                    legend.text = "> MAP LINK FAILED · $result\n> Fix NODE_URI on the RIG tab ([FIND NODE] can locate it), then tap [REFRESH]."
                 } else {
                     loadedFor = key
                     shownWork = null
@@ -69,8 +77,36 @@ class MapPage(
         }.start()
     }
 
-    /** Re-draw if the rig's current route or mission changed. */
+    private var soloHeight = -1L
+
+    /** Solo mode: the map comes from the blockchain on this phone. */
+    private fun loadSolo(coin: CoinProfile) {
+        val chain = SoloBackend.chainFor(activity, coin)
+        title.text = if (coin.kind == WorkKind.STAR_ROUTES) "STAR_MAP" else "ORBIT_MAP"
+        if (coin.kind == WorkKind.STAR_ROUTES) {
+            stars = JSONArray().also { a ->
+                for (i in SoloData.STAR_NAMES.indices) a.put(org.json.JSONObject().put("id", i)
+                    .put("name", SoloData.STAR_NAMES[i]).put("x", SoloData.STAR_X[i]).put("y", SoloData.STAR_Y[i])
+                    .put("z", SoloData.STAR_Z[i]))
+            }
+            routes = SoloBackend.routeRows(chain, 12)
+        } else {
+            model = TrajectoryModel(org.json.JSONObject(SoloData.NEBULITE_MODEL_JSON))
+            missions = SoloBackend.missionRows(chain, 8)
+        }
+        loadedFor = coin.id + "|solo"
+        soloHeight = chain.height
+        shownWork = null
+        build(coin.kind)
+        legend.text = "> SOLO CHAIN ON THIS PHONE · height ${chain.height}\n" + legend.text
+    }
+
+    /** Re-draw if the rig's current route or mission changed (or the solo chain grew). */
     fun refreshLive() {
+        if (loadedFor.endsWith("|solo")) {
+            val coin = CoinProfile.byId(loadedFor.substringBefore("|"))
+            if (SoloBackend.chainFor(activity, coin).height != soloHeight) { loadSolo(coin); return }
+        }
         if (loadedFor.isEmpty() || MinerService.status.work === shownWork) return
         build(if (loadedFor.startsWith("nblt|")) WorkKind.TRAJECTORIES else WorkKind.STAR_ROUTES)
     }

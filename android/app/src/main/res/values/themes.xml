@@ -11,5 +11,7 @@
         <item name="android:textColorHint">#5C5C5C</item>
         <item name="android:colorControlNormal">@color/crimson_dim</item>
         <item name="android:colorControlActivated">@color/crimson</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
     </style>
 </resources>

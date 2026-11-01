@@ -276,6 +276,23 @@ class ApiTests(unittest.TestCase):
         r = self.client.post("/mining/trajectory", json={"job_id": work["job_id"], "seq": [2], "days": [1]})
         self.assertEqual(r.status_code, 400)
 
+    def test_chain_import(self):
+        import node
+        other = ch.Blockchain()
+        clock = Clock()
+        for _ in range(2):
+            mine_next(other, self.bob.addr, clock)
+        r = self.client.post("/chain/import", json=other.blocks).get_json()
+        self.assertTrue(r["adopted"])
+        self.assertEqual(node.chain.tip["hash"], other.tip["hash"])
+        # a shorter chain is refused
+        r = self.client.post("/chain/import", json=other.blocks[:2]).get_json()
+        self.assertFalse(r["adopted"])
+        # a tampered chain is refused
+        bad = [dict(b) for b in other.blocks] + [dict(other.blocks[-1], height=3)]
+        self.assertFalse(self.client.post("/chain/import", json=bad).get_json()["adopted"])
+        self.assertEqual(self.client.post("/chain/import", json={"no": 1}).status_code, 400)
+
     def test_bad_address_refused(self):
         r = self.client.get("/mining/work?address=nope")
         self.assertEqual(r.status_code, 400)

@@ -48,6 +48,15 @@ class MainActivity : Activity() {
     private lateinit var threadsLabel: TextView
     private lateinit var chargingOnly: CheckBox
     private lateinit var testResult: TextView
+    private lateinit var alert: TextView
+    private lateinit var setupGuide: TextView
+    private lateinit var findNodeBtn: Button
+    private var scanning = false
+    private lateinit var soloMode: CheckBox
+    private lateinit var walletRow: View
+    private lateinit var balance: TextView
+    private lateinit var soloRow: View
+    private var lastBalanceCheck = 0L
     private lateinit var rigPage: ScrollView
     private lateinit var ledgerPage: ScrollView
     private lateinit var ledger: LedgerPage
@@ -68,6 +77,7 @@ class MainActivity : Activity() {
             render(MinerService.status)
             if (showingLedger && System.currentTimeMillis() - lastLedgerRender > 5000) renderLedger()
             if (page == PAGE_MAP) map.refreshLive()
+            if (page == PAGE_RIG) refreshBalance()
             handler.postDelayed(this, 1000)
         }
     }
@@ -75,6 +85,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        actionBar?.hide()   // belt and braces: the theme already has no title bar
         prefs = Prefs(this)
 
         hashrate = findViewById(R.id.hashrate)
@@ -102,6 +113,13 @@ class MainActivity : Activity() {
         threadsLabel = findViewById(R.id.threadsLabel)
         chargingOnly = findViewById(R.id.chargingOnly)
         testResult = findViewById(R.id.testResult)
+        alert = findViewById(R.id.alert)
+        setupGuide = findViewById(R.id.setupGuide)
+        findNodeBtn = findViewById(R.id.findNode)
+        soloMode = findViewById(R.id.soloMode)
+        walletRow = findViewById(R.id.walletRow)
+        balance = findViewById(R.id.balance)
+        soloRow = findViewById(R.id.soloRow)
         rigPage = findViewById(R.id.rigPage)
         ledgerPage = findViewById(R.id.ledgerPage)
         tabRig = findViewById(R.id.tabRig)
@@ -137,6 +155,18 @@ class MainActivity : Activity() {
 
         toggle.setOnClickListener { if (MinerService.status.running) stopMiner() else startMiner() }
         findViewById<Button>(R.id.test).setOnClickListener { testConnection() }
+        findNodeBtn.setOnClickListener { findNode() }
+        soloMode.setOnCheckedChangeListener { _, checked ->
+            prefs.setSolo(prefs.coinId, checked)
+            alert.visibility = View.GONE
+            updateSoloUi()
+            refreshBalance(force = true)
+        }
+        findViewById<Button>(R.id.newWallet).setOnClickListener { newWallet() }
+        findViewById<Button>(R.id.backupKey).setOnClickListener { backupKey() }
+        findViewById<Button>(R.id.importKey).setOnClickListener { importKey() }
+        findViewById<Button>(R.id.pushChain).setOnClickListener { pushChain() }
+        findViewById<Button>(R.id.resetSolo).setOnClickListener { resetSolo() }
         tabRig.setOnClickListener { showPage(PAGE_RIG) }
         tabMap.setOnClickListener { showPage(PAGE_MAP) }
         tabLedger.setOnClickListener { showPage(PAGE_LEDGER) }
@@ -212,6 +242,18 @@ class MainActivity : Activity() {
         user.setText(prefs.user(c.id))
         pass.setText(prefs.password(c.id))
         passGroup.visibility = if (stratum) View.VISIBLE else View.GONE
+        findNodeBtn.visibility = if (stratum) View.GONE else View.VISIBLE
+        alert.visibility = View.GONE
+        testResult.text = ""
+        val own = c.kind != WorkKind.NONE
+        soloMode.visibility = if (own) View.VISIBLE else View.GONE
+        walletRow.visibility = if (own) View.VISIBLE else View.GONE
+        soloMode.isChecked = prefs.solo(c.id)
+        // fill in the app wallet's address if the field is empty
+        if (own && user.text.isBlank()) prefs.wallet.address(c.addressPrefix)?.let { user.setText(it) }
+        balance.text = ""
+        updateSoloUi()
+        refreshBalance(force = true)
         val algo = when (c.kind) {
             WorkKind.STAR_ROUTES -> "STAR ROUTES + SHA-256d"
             WorkKind.TRAJECTORIES -> "TRAJECTORIES + SHA-256d"
@@ -237,20 +279,50 @@ class MainActivity : Activity() {
 
     // ---- mining -------------------------------------------------------
 
+    /** Shows a problem right under the ENGAGE button and jumps to the field that needs fixing. */
+    private fun showAlert(message: String, field: View? = null) {
+        alert.text = "> $message"
+        alert.visibility = View.VISIBLE
+        if (field is EditText) field.error = "!"
+        field?.let { f ->
+            f.requestFocus()
+            rigPage.post { rigPage.smoothScrollTo(0, maxOf(0, alert.top - Theme.dp(this, 40f).toInt())) }
+        }
+    }
+
     private fun startMiner() {
         saveSettings()
         val c = prefs.coin
+        val u = prefs.url(c.id)
+        val who = prefs.user(c.id)
+        val solo = prefs.isSolo
         when {
-            prefs.url(c.id).isBlank() -> { url.error = "Enter the ${if (c.protocol == Protocol.STRATUM) "pool" else "node"} address"; return }
-            c.protocol == Protocol.STRATUM && !prefs.url(c.id).startsWith("stratum+") -> {
-                url.error = "Pool addresses look like stratum+tcp://host:port"; return
+            solo && (!who.startsWith(c.addressPrefix) || who.length != c.addressLength) -> {
+                showAlert("SOLO MODE needs your ${c.addressPrefix}… address in WALLET_ADDR. " +
+                    "Tap [NEW WALLET] to make one on this phone.", user); return
             }
-            c.protocol == Protocol.NODE && (!prefs.user(c.id).startsWith(c.addressPrefix) ||
-                prefs.user(c.id).length != c.addressLength) -> {
-                user.error = "Paste the ${c.addressPrefix}… address printed by: python wallet.py new"; return
+            solo -> {}
+            u.isBlank() && c.protocol == Protocol.NODE -> {
+                showAlert("NODE_URI is empty. Start the ${c.name} node on your computer " +
+                    "(${c.nodeFolder}/node.py), then tap [FIND NODE] or type its address, " +
+                    "e.g. http://192.168.40.10:${c.defaultPort}", url); return
             }
-            prefs.user(c.id).isBlank() -> { user.error = "Enter your worker name"; return }
+            u.isBlank() -> { showAlert("POOL_URI is empty. Copy it from your pool's setup page.", url); return }
+            c.protocol == Protocol.STRATUM && !u.startsWith("stratum+") -> {
+                showAlert("Pool addresses look like stratum+tcp://host:port", url); return
+            }
+            c.protocol == Protocol.NODE && !u.startsWith("http://") && !u.startsWith("https://") -> {
+                showAlert("NODE_URI must start with http://, e.g. http://192.168.40.10:${c.defaultPort}", url); return
+            }
+            c.protocol == Protocol.NODE && (!who.startsWith(c.addressPrefix) || who.length != c.addressLength) -> {
+                val got = if (who.isEmpty()) "is empty" else "has ${who.length} characters"
+                showAlert("WALLET_ADDR $got. It needs a full ${c.addressPrefix}… address " +
+                    "(${c.addressLength} characters). On your computer, in the ${c.nodeFolder} folder, run:\n" +
+                    "python wallet.py new\nand paste the address it prints.", user); return
+            }
+            who.isBlank() -> { showAlert("WORKER is empty. Use yourPayoutAddress.workerName (see your pool's docs).", user); return }
         }
+        alert.visibility = View.GONE
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -267,14 +339,19 @@ class MainActivity : Activity() {
     }
 
     private fun setEditable(editable: Boolean) {
-        listOf<View>(url, user, pass, threads, chargingOnly).forEach { it.isEnabled = editable }
+        listOf<View>(url, user, pass, threads, chargingOnly, soloMode).forEach { it.isEnabled = editable }
         chips.values.forEach { it.alpha = if (editable || it.isSelected) 1f else 0.4f }
     }
 
     private fun testConnection() {
         saveSettings()
-        testResult.text = "> PINGING…"
         val c = prefs.coin
+        if (prefs.isSolo) {
+            val chain = SoloBackend.chainFor(this, c)
+            testResult.text = "> SOLO CHAIN ON THIS PHONE · height ${chain.height} · nothing to ping"
+            return
+        }
+        testResult.text = "> PINGING…"
         val backend = prefs.backend()
         Thread {
             val text = try {
@@ -286,11 +363,177 @@ class MainActivity : Activity() {
                     "> LINK OK · pool sent work" + if (job.height > 0) " for block ${job.height}" else ""
                 }
             } catch (e: Exception) {
-                "> LINK FAILED · ${e.message ?: e.javaClass.simpleName}"
+                "> LINK FAILED · ${friendlyError(e, prefs.url(c.id))}"
             } finally {
                 backend.close()
             }
             runOnUiThread { testResult.text = text }
+        }.start()
+    }
+
+    // ---- solo mode and wallet ---------------------------------------------
+
+    private fun updateSoloUi() {
+        val c = prefs.coin
+        if (c.kind == WorkKind.NONE) { soloRow.visibility = View.GONE; return }
+        val solo = prefs.isSolo
+        soloRow.visibility = if (solo) View.VISIBLE else View.GONE
+        urlLabel.text = if (solo) "NODE_URI (optional: where [PUSH CHAIN] sends your solo chain)" else "NODE_URI"
+    }
+
+    /** Shows the balance for the address in WALLET_ADDR: from the solo chain, or from the node. */
+    private fun refreshBalance(force: Boolean = false) {
+        val c = prefs.coin
+        val addr = user.text.toString().trim()
+        if (c.kind == WorkKind.NONE || !addr.startsWith(c.addressPrefix) || addr.length != c.addressLength) {
+            balance.text = ""; return
+        }
+        val now = System.currentTimeMillis()
+        if (prefs.isSolo) {
+            if (!force && now - lastBalanceCheck < 2000) return
+            lastBalanceCheck = now
+            val chain = SoloBackend.chainFor(this, c)
+            balance.text = "> BALANCE ${Format.coins(chain.balance(addr), chain.rules.unitsPerCoin, 2)} ${c.ticker} " +
+                "· solo chain height ${chain.height}"
+            return
+        }
+        val nodeUrl = url.text.toString().trim()
+        if (nodeUrl.isEmpty() || (!force && now - lastBalanceCheck < 15000)) return
+        lastBalanceCheck = now
+        Thread {
+            val text = try {
+                val (code, body) = NodeClient(nodeUrl).request("GET", "/balance/$addr", null)
+                if (code == 200) "> BALANCE ${Format.coins(body.getLong("balance"), body.optLong("units_per_coin", 100_000_000L), 2)} ${c.ticker} · on node"
+                else ""
+            } catch (e: Exception) { "" }
+            runOnUiThread { if (prefs.coin.id == c.id) balance.text = text }
+        }.start()
+    }
+
+    private fun newWallet() {
+        val create = {
+            prefs.wallet.create()
+            val c = prefs.coin
+            user.setText(prefs.wallet.address(c.addressPrefix))
+            user.error = null
+            saveSettings()
+            refreshBalance(force = true)
+            backupKey(justCreated = true)
+        }
+        if (!prefs.wallet.hasKey()) { create(); return }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Replace your wallet?")
+            .setMessage("This phone already has a wallet key. A new key means coins sent to the old addresses " +
+                "can only be spent with the old key. Back it up first with [BACKUP KEY].")
+            .setPositiveButton("Make new wallet") { _, _ -> create() }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun backupKey(justCreated: Boolean = false) {
+        val key = prefs.wallet.privateKeyHex
+        if (key == null) { showAlert("No wallet on this phone yet. Tap [NEW WALLET].", user); return }
+        val c = prefs.coin
+        val msg = (if (justCreated) "Your wallet is ready. Write this key down or store it somewhere safe: " +
+            "anyone with it can spend your coins, and if you lose it the coins are gone.\n\n" else "") +
+            "PRIVATE KEY\n$key\n\nPulsarite: ${Wallet.addressFor(key, Coin.ADDRESS_PREFIX)}\n" +
+            "Nebulite: ${Wallet.addressFor(key, NebuliteCoin.ADDRESS_PREFIX)}\n\n" +
+            "To use it on a computer, save this as wallet.json in the ${c.nodeFolder.ifEmpty { "node" }} folder:\n" +
+            Wallet.walletJson(key)
+        android.app.AlertDialog.Builder(this)
+            .setTitle(if (justCreated) "Back up your wallet" else "Wallet key")
+            .setMessage(msg)
+            .setPositiveButton("Copy key") { _, _ ->
+                val cm = getSystemService(android.content.ClipboardManager::class.java)
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("wallet key", key))
+            }
+            .setNegativeButton("Done", null)
+            .show()
+    }
+
+    private fun importKey() {
+        val input = EditText(this).apply { hint = "64 hex characters from wallet.json" }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Import wallet key")
+            .setMessage("Paste the private_key from a wallet.json made by wallet.py. It replaces this phone's current key.")
+            .setView(input)
+            .setPositiveButton("Import") { _, _ ->
+                if (prefs.wallet.import(input.text.toString())) {
+                    user.setText(prefs.wallet.address(prefs.coin.addressPrefix))
+                    saveSettings()
+                    refreshBalance(force = true)
+                    testResult.text = "> WALLET IMPORTED"
+                } else {
+                    showAlert("That isn't a valid key: it should be 64 characters of 0-9 and a-f.", user)
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun pushChain() {
+        saveSettings()
+        val c = prefs.coin
+        val nodeUrl = prefs.url(c.id)
+        if (nodeUrl.isBlank()) {
+            showAlert("Set NODE_URI to the node that should receive your solo chain (tap [FIND NODE] " +
+                "or use your cloud address), then tap [PUSH CHAIN] again.", url); return
+        }
+        val chain = SoloBackend.chainFor(this, c)
+        testResult.text = "> PUSHING ${chain.height} BLOCKS TO $nodeUrl…"
+        Thread {
+            val text = try { "> " + SoloBackend.push(chain, nodeUrl) } catch (e: Exception) { "> PUSH FAILED · ${friendlyError(e, nodeUrl)}" }
+            runOnUiThread { testResult.text = text }
+        }.start()
+    }
+
+    private fun resetSolo() {
+        val c = prefs.coin
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Reset solo chain?")
+            .setMessage("This deletes the ${c.name} blocks mined in solo mode on this phone, and the coins in them. " +
+                "Push the chain to a node first if you want to keep them.")
+            .setPositiveButton("Reset") { _, _ ->
+                SoloBackend.chainFor(this, c).reset()
+                refreshBalance(force = true)
+                testResult.text = "> SOLO CHAIN RESET"
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** Scans the phone's Wi-Fi network for the selected coin's node and fills in NODE_URI. */
+    private fun findNode() {
+        val c = prefs.coin
+        if (scanning || c.protocol != Protocol.NODE) return
+        val mine = NodeFinder.localAddresses()
+        if (mine.isEmpty()) {
+            testResult.text = "> NO WI-FI ADDRESS. Connect the phone to the same Wi-Fi as the computer running the node."
+            return
+        }
+        scanning = true
+        findNodeBtn.isEnabled = false
+        val port = NodeFinder.port(url.text.toString(), c.defaultPort)
+        testResult.text = "> SCANNING FOR ${c.name.uppercase(Locale.US)} NODES ON PORT $port…"
+        Thread {
+            val found = NodeFinder.scan(c.name, port) { net ->
+                runOnUiThread { testResult.text = "> SCANNING $net FOR ${c.name.uppercase(Locale.US)} NODES ON PORT $port…" }
+            }
+            runOnUiThread {
+                scanning = false
+                findNodeBtn.isEnabled = true
+                if (found.isNotEmpty()) {
+                    url.setText(found[0])
+                    url.error = null
+                    saveSettings()
+                    alert.visibility = View.GONE
+                    testResult.text = "> FOUND ${found.size} NODE${if (found.size > 1) "S" else ""} · using ${found[0]}"
+                } else {
+                    testResult.text = "> NO ${c.name.uppercase(Locale.US)} NODE FOUND on your Wi-Fi (phone is ${mine.joinToString()}).\n" +
+                        "> On the computer: cd ${c.nodeFolder} && python node.py. It prints the address to use.\n" +
+                        "> Windows may ask to allow Python through the firewall: allow it on private networks."
+                }
+            }
         }.start()
     }
 
@@ -306,6 +549,29 @@ class MainActivity : Activity() {
         tabLedger.setTextColor(if (p == PAGE_LEDGER) Theme.CRIMSON_LIGHT else Theme.MUTED)
         if (p == PAGE_LEDGER) renderLedger()
         if (p == PAGE_MAP) { saveSettings(); map.load(prefs) }
+    }
+
+    /** Step-by-step help until the selected own coin has a node address and wallet. */
+    private fun updateSetupGuide(running: Boolean) {
+        val c = prefs.coin
+        if (running || c.protocol != Protocol.NODE) { setupGuide.visibility = View.GONE; return }
+        val haveUrl = url.text.isNotBlank()
+        val haveAddr = user.text.startsWith(c.addressPrefix) && user.text.length == c.addressLength
+        if (prefs.isSolo) {
+            if (haveAddr) { setupGuide.visibility = View.GONE; return }
+            setupGuide.text = "// SOLO SETUP ${c.name.uppercase(Locale.US)}\n[✓] SOLO MODE on: the blockchain runs on this phone\n" +
+                "[ ] Tap [NEW WALLET] below to create your address\n[ ] Tap ENGAGE RIG"
+            setupGuide.visibility = View.VISIBLE
+            return
+        }
+        if (haveUrl && haveAddr) { setupGuide.visibility = View.GONE; return }
+        fun step(done: Boolean, text: String) = (if (done) "[✓] " else "[ ] ") + text
+        setupGuide.text = "// SETUP ${c.name.uppercase(Locale.US)} · or tick SOLO MODE to skip the computer\n" +
+            step(haveUrl, "On your computer: cd ${c.nodeFolder} && python node.py") + "\n" +
+            step(haveUrl, "Tap [FIND NODE] below (same Wi-Fi), or type the address node.py prints") + "\n" +
+            step(haveAddr, "Tap [NEW WALLET] (or paste an address from wallet.py)") + "\n" +
+            "[ ] Tap ENGAGE RIG"
+        setupGuide.visibility = View.VISIBLE
     }
 
     private fun renderLedger() {
@@ -325,11 +591,18 @@ class MainActivity : Activity() {
         val (num, unit) = Format.rateParts(s.hashrate)
         hashrate.text = num
         hashUnit.text = unit
+        val problem = running && (s.pausedReason != null || s.message.startsWith("LINK_ERROR") ||
+            s.message.startsWith("REJECTED"))
         state.text = "> " + when {
             !running -> "RIG_IDLE"
+            s.pausedReason == "NOT_CHARGING" -> "PAUSED: NOT CHARGING. Plug in, or untick CHARGING ONLY."
+            s.pausedReason == "BATTERY_LOW" -> "PAUSED: BATTERY BELOW 20%. Plug in to continue."
+            s.pausedReason == "THERMAL_LIMIT" -> "PAUSED: PHONE TOO HOT. Resumes when it cools."
             s.pausedReason != null -> "PAUSED: ${s.pausedReason}"
             else -> s.message
         }
+        state.setTextColor(if (problem) Theme.CRIMSON_LIGHT else Theme.AMBER)
+        updateSetupGuide(running)
         val w = s.work
         if (running && w != null && prefs.coin.protocol == Protocol.NODE) {
             route.visibility = View.VISIBLE

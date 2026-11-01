@@ -83,24 +83,25 @@ class NodeClient(baseUrl: String, private val address: String = "") : PoolBacken
     override fun hasNewWork() = false
     override fun close() {}
 
-    internal fun request(method: String, path: String, payload: JSONObject?): Pair<Int, JSONObject> {
-        val (code, text) = requestRaw(method, path, payload)
+    internal fun request(method: String, path: String, payload: JSONObject?, rawBody: String? = null): Pair<Int, JSONObject> {
+        val (code, text) = requestRaw(method, path, payload, rawBody)
         val json = try { JSONObject(text) } catch (e: Exception) { JSONObject().put("error", "HTTP $code") }
         return code to json
     }
 
     /** Raw response text, for endpoints that return JSON arrays (/routes, /missions). */
-    internal fun requestRaw(method: String, path: String, payload: JSONObject?): Pair<Int, String> {
+    internal fun requestRaw(method: String, path: String, payload: JSONObject?, rawBody: String? = null): Pair<Int, String> {
         val conn = URL(base + path).openConnection() as HttpURLConnection
         try {
             conn.requestMethod = method
             conn.connectTimeout = 8000
-            conn.readTimeout = 15000
+            conn.readTimeout = if (rawBody != null) 60000 else 15000
             conn.setRequestProperty("Accept", "application/json")
-            if (payload != null) {
+            val body = rawBody ?: payload?.toString()
+            if (body != null) {
                 conn.doOutput = true
                 conn.setRequestProperty("Content-Type", "application/json")
-                conn.outputStream.use { it.write(payload.toString().toByteArray()) }
+                conn.outputStream.use { it.write(body.toByteArray()) }
             }
             val code = conn.responseCode
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream

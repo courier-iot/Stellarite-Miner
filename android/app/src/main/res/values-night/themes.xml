@@ -1,5 +1,18 @@
+<!-- Same as values/themes.xml. Kept so a stale night-mode theme from an older version can never come back. -->
 <resources>
-    <style name="AppTheme" parent="android:Theme.Material">
-        <item name="android:colorAccent">#FBBF24</item>
+    <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorAccent">@color/crimson</item>
+        <item name="android:colorPrimary">@color/black</item>
+        <item name="android:colorPrimaryDark">@color/black</item>
+        <item name="android:statusBarColor">@color/black</item>
+        <item name="android:navigationBarColor">@color/black</item>
+        <item name="android:windowBackground">@color/black</item>
+        <item name="android:textColorPrimary">@color/text</item>
+        <item name="android:textColorSecondary">@color/muted</item>
+        <item name="android:textColorHint">#5C5C5C</item>
+        <item name="android:colorControlNormal">@color/crimson_dim</item>
+        <item name="android:colorControlActivated">@color/crimson</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
     </style>
 </resources>

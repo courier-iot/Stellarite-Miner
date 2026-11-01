@@ -4,7 +4,16 @@ import android.content.Context
 
 /** Saved settings. Connection details are stored per coin. */
 class Prefs(context: Context) {
+    private val app = context.applicationContext ?: context
     private val sp = context.getSharedPreferences("miner", Context.MODE_PRIVATE)
+
+    /** The app's own wallet (one key for both coins). */
+    val wallet = Wallet(sp)
+
+    /** Solo mode: mine against a blockchain on this phone instead of a node (own coins only). */
+    fun solo(coin: String): Boolean = sp.getBoolean("solo_$coin", false)
+    fun setSolo(coin: String, v: Boolean) = sp.edit().putBoolean("solo_$coin", v).apply()
+    val isSolo: Boolean get() = coin.kind != WorkKind.NONE && solo(coinId)
 
     var coinId: String
         get() = sp.getString("coin", "plsr")!!
@@ -12,8 +21,11 @@ class Prefs(context: Context) {
 
     val coin: CoinProfile get() = CoinProfile.byId(coinId)
 
-    fun url(coin: String): String =
-        sp.getString("url_$coin", null) ?: CoinProfile.byId(coin).let { if (it.protocol == Protocol.NODE) it.urlHint else "" }
+    /** Saved node/pool address; empty until the user sets one (the old placeholder counts as unset). */
+    fun url(coin: String): String {
+        val v = sp.getString("url_$coin", "")!!
+        return if (v in OLD_PLACEHOLDERS) "" else v
+    }
     fun setUrl(coin: String, v: String) = sp.edit().putString("url_$coin", v.trim()).apply()
 
     fun user(coin: String): String = sp.getString("user_$coin", "")!!
@@ -34,13 +46,18 @@ class Prefs(context: Context) {
     fun backend(): PoolBackend {
         val c = coin
         return when (c.protocol) {
-            Protocol.NODE -> if (c.kind == WorkKind.TRAJECTORIES) NebuliteClient(url(c.id), user(c.id))
-                else NodeClient(url(c.id), user(c.id))
+            Protocol.NODE -> when {
+                solo(c.id) -> SoloBackend(SoloBackend.chainFor(app, c), user(c.id))
+                c.kind == WorkKind.TRAJECTORIES -> NebuliteClient(url(c.id), user(c.id))
+                else -> NodeClient(url(c.id), user(c.id))
+            }
             Protocol.STRATUM -> StratumClient(url(c.id), user(c.id), password(c.id))
         }
     }
 
     companion object {
+        private val OLD_PLACEHOLDERS = setOf("http://192.168.1.10:5000", "http://192.168.1.10:5001")
+
         fun maxThreads() = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
         /** Half the cores by default, so the phone stays responsive and cooler. */
         fun defaultThreads() = (maxThreads() / 2).coerceAtLeast(1)
