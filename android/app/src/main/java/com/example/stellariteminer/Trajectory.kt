@@ -40,6 +40,8 @@ class TrajectoryModel(work: JSONObject) {
     val windowStart: Int
     val windowEnd: Int
     val maxTofDays: Int
+    /** "science", "cargo" or "crewed" (as trajectory.MISSION_TYPES). */
+    val missionType: String
     val flybyBodies: List<Int>
     val maxFlybys: Int
 
@@ -55,7 +57,8 @@ class TrajectoryModel(work: JSONObject) {
         val ph = work.getJSONObject("physics")
         muSun = ph.getDouble("mu_sun")
         kms = ph.getDouble("au_per_day_to_kms")
-        timePenalty = ph.getDouble("time_penalty_mps_per_year")
+        timePenalty = work.optJSONObject("mission")?.optDouble("time_penalty_mps_per_year", Double.NaN)
+            ?.takeIf { !it.isNaN() } ?: ph.getDouble("time_penalty_mps_per_year")
         minLegDays = ph.getInt("min_leg_days")
         flybySafety = ph.getDouble("flyby_safety")
         minFlybyVinf = ph.getDouble("min_flyby_vinf")
@@ -68,6 +71,7 @@ class TrajectoryModel(work: JSONObject) {
         maxTofDays = m?.getInt("max_tof_days") ?: 0
         flybyBodies = m?.getJSONArray("flyby_bodies")?.let { fb -> List(fb.length()) { fb.getInt(it) } } ?: emptyList()
         maxFlybys = m?.getInt("max_flybys") ?: 0
+        missionType = m?.optString("type", "science") ?: "science"
     }
 
     /** Heliocentric ecliptic position (AU) and velocity (AU/day): x, y, z, vx, vy, vz. */
@@ -259,6 +263,10 @@ class TrajectoryModel(work: JSONObject) {
 
     companion object {
         const val EARTH = 2
+
+        /** Calendar date (YYYY-MM-DD) of a mission day number: days since J2000 (noon, 1 Jan 2000). */
+        fun dateOf(day: Number): String = java.time.LocalDateTime.of(2000, 1, 1, 12, 0)
+            .plusSeconds(Math.floor(day.toDouble() * 86400).toLong()).toLocalDate().toString()
     }
 }
 

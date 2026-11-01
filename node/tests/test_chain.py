@@ -1,4 +1,5 @@
 """Run from the node/ folder:  python -m unittest discover tests"""
+import hashlib
 import math
 import os
 import sys
@@ -289,9 +290,25 @@ class ChainTests(unittest.TestCase):
         for sid, arrive, _, u, _, depart in stars.route_legs(plan, st):
             if sid in st:
                 self.assertEqual(u, 0)
-                self.assertEqual(depart - arrive, stars.SURVEY_T)                # 5 years at each stop
+                self.assertEqual(depart - arrive, stars.survey_t(sid))           # 5 years + 2 per known planet
             else:
                 self.assertEqual(depart, arrive)
+
+    def test_planet_systems(self):
+        trappist = next(s["id"] for s in stars.CATALOG if s["name"] == "TRAPPIST-1")
+        sirius = next(s["id"] for s in stars.CATALOG if s["name"] == "Sirius")
+        self.assertEqual(stars.CATALOG[trappist]["planets"], 7)
+        self.assertEqual(stars.survey_t(trappist), 19_000)            # 5 years + 7 planets x 2
+        self.assertEqual(stars.survey_t(sirius), 5_000)
+        # stops favour planet hosts: over many blocks, hosts are stops far more often than their share
+        hosts = hits = picks = in_problems = 0
+        for k in range(300):
+            h = hashlib.sha256(str(k).encode()).hexdigest()
+            prob, st = stars.problem(h), stars.stops(h)
+            in_problems += sum(stars.CATALOG[s]["planets"] > 0 for s in prob) / len(prob)
+            hits += sum(stars.CATALOG[s]["planets"] > 0 for s in st)
+            picks += len(st)
+        self.assertGreater(hits / picks, 1.4 * in_problems / 300)
 
     def test_miner_timing_matches_node(self):
         from route_opt import plan_eval, optimise_plan
@@ -301,6 +318,7 @@ class ChainTests(unittest.TestCase):
                     "probe_speed_mly_per_year": stars.SPEED,
                     "probe_accel_mly_per_year2": C.PROBE_ACCEL_MLY_PER_YEAR2,
                     "survey_years": C.SURVEY_YEARS, "dv_budget_pct_c": C.DV_BUDGET_PCT_C,
+                    "survey_years_per_planet": C.SURVEY_YEARS_PER_PLANET,
                     "launch_t": stars.LAUNCH_T, "intercept_iterations": stars.INTERCEPT_ITERATIONS}
             base = stars.baseline_route(prob, st)
             tuned = optimise_plan([s for s, _ in base], work, 0.3)
@@ -400,6 +418,17 @@ class ApiTests(unittest.TestCase):
         route = old["baseline_route"]
         r = self.client.post("/mining/submit", json={"job_id": old["job_id"], "route": route, "nonce": 0})
         self.assertIn(r.status_code, (409, 410))
+
+    def test_web_map(self):
+        page = self.client.get("/map")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"map/data", page.data)          # relative, so it works behind /pulsarite/ or /nebulite/
+        self.mine_via_api(self.alice.addr)
+        d = self.client.get("/map/data").get_json()
+        self.assertEqual(d["height"], 1)
+        rows = d["routes"]
+        self.assertEqual(len(rows), 1)
+        self.assertGreater(len(rows[0]["points"]), 2)
 
     def test_route_map(self):
         self.mine_via_api(self.alice.addr)

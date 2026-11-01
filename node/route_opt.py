@@ -133,6 +133,7 @@ def plan_eval(plan, work):
     t0, iters = work["launch_t"], work["intercept_iterations"]
     stop_set = set(work.get("stops", ()))
     survey = work.get("survey_years", 0) * 1000
+    per_planet = work.get("survey_years_per_planet", 0) * 1000
 
     def pos(s, t):
         return (s["x"] + s["vx"] * t // 1_000_000, s["y"] + s["vy"] * t // 1_000_000,
@@ -147,7 +148,7 @@ def plan_eval(plan, work):
             d = math.isqrt(sum((p[k] - here[k]) ** 2 for k in range(3)) * 1_000_000)
             dt, speed, dv = probe_leg(d, u, c, stop, A)
             arrive = t + dt
-        t = arrive + survey if stop else arrive
+        t = arrive + survey + per_planet * s.get("planets", 0) if stop else arrive
         here, u, total_dv = pos(s, t), speed, total_dv + dv
     return t - t0, total_dv
 

@@ -62,7 +62,8 @@ class NebuliteClient(baseUrl: String, private val address: String, private val n
             rewardUnits = work.getLong("reward"),
             unitsPerCoin = work.getLong("units_per_coin"),
             work = TrajectoryInfo(seq.toList(), days.toList(), model!!.pathName(seq),
-                scored.getDouble("dv_kms"), scored.getDouble("years"), scored.getDouble("improvement_pct")),
+                scored.getDouble("dv_kms"), scored.getDouble("years"), scored.getDouble("improvement_pct"),
+                work.getJSONObject("mission").optString("type", "science")),
         )
     }
 

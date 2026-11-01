@@ -19,13 +19,14 @@ Today: routes from the Sun through 24 moving stars, flown by a probe that picks 
   - [x] Acceleration and deceleration phases (10 years to or from 0.1c), and 4 survey stops per block where the probe must come to rest.
 - [ ] **Real star catalog by default.** Ship a Gaia/HYG-derived catalog of every star within 50 ly (about 1,500 stars, many of them faint red dwarfs) and record its fingerprint in the genesis block, so nodes can't disagree about it.
 - [ ] **Scale problems with the catalog.** Raise `STARS_PER_PROBLEM` from 24 to 40–60 so optimisation stays hard as phones get better at it.
-- [ ] **Science-weighted targets.** Favour stars with known exoplanets or habitable-zone planets (from the NASA Exoplanet Archive), so routes prioritise worthwhile destinations. Score science value per year of travel.
+- [x] **Science-weighted targets.** Survey stops favour stars with confirmed planets (weight 1 + 3 × planets), and surveys take 2 extra years per planet.
+  - [ ] Weight habitable-zone planets higher, and take planet data from the NASA Exoplanet Archive for HYG-built catalogs.
+  - [ ] Score science value per year of travel, not just mission time.
 - [x] **Fuel and survey time.** 5 years at each survey stop; a per-leg cruise speed; a delta-v budget every route must fit, with the rocket-equation mass ratio reported.
   - [ ] Propellant mass instead of a delta-v total: acceleration rises as the probe gets lighter.
-  - [ ] Science value per stop (exoplanets, habitable zones) and survey time that depends on the target.
 - [ ] **Best-known route archive.** Keep the best route ever found for each star set, so the map improves over time instead of only growing.
 - [x] **3D route map in the app** (MAP tab).
-- [ ] **3D route map on the web.** A page served by the node that draws recent routes among the stars.
+- [x] **3D route map on the web.** `/map` on each node: recent routes among the stars, or missions among the planets' orbits.
 
 ## Nebulite: spacecraft trajectories
 
@@ -35,9 +36,9 @@ Today: planets on circular, flat orbits; Lambert transfers between planets; patc
   - [x] Checked against reality: oppositions of Mars through Neptune land within a day of the real dates, Mars' 2003 close approach matches to 0.0003 AU, and Voyager 1 and 2 flown on their real dates need almost no flyby fuel.
   - [ ] Missions arriving after 2050 (some Uranus and Neptune missions) use the elements beyond their fitted range; switch to JPL's long-span table (3000 BC–3000 AD) or a full ephemeris.
   - [ ] Regression tests for Cassini (V-V-E-J-S) and Juno (E-E-J), once multi-revolution legs and deep-space manoeuvres exist.
-- [ ] **Travel time as a mission parameter.** Travel time is already scored, as a fixed 250 m/s per year. Make the trade-off part of each mission instead (crewed missions value speed, robotic ones value fuel) and report launch and arrival dates in plain calendar terms.
-  - [ ] Per-mission `time_penalty` and `max_tof` chosen from the block hash, across a range of mission types.
-  - [ ] Show arrival dates on the HUD and in `/missions`.
+- [x] **Travel time as a mission parameter.** Science, cargo and crewed missions, picked from the block hash, each with its own value of time (250, 50 and 3,000 m/s per year) and flight-time limit; launch, flyby and arrival dates in calendar terms.
+  - [x] Per-mission `time_penalty` and `max_tof` chosen from the block hash.
+  - [x] Arrival dates on the HUD, the map and `/missions`.
 - [ ] **More varied missions.** Blocks whose launch windows overlap often share the same best trajectory, so known solutions can be reused. Vary more per block (destinations including asteroids and moons, arrival-date limits, time penalties) so each block is a genuinely new problem.
 - [ ] **Multi-revolution transfers and deep-space manoeuvres.** Allow legs that loop around the Sun more than once, plus engine burns mid-leg. Real missions need these: Cassini's two Venus flybys use a resonant loop.
 - [ ] **Arrival into orbit.** Score the burn needed to enter a capture orbit at the target (a periapsis height and eccentricity), not just the arrival speed.
@@ -79,3 +80,4 @@ Today: planets on circular, flat orbits; Lambert transfers between planets; patc
 - [x] Pulsarite: moving stars and probe travel time, scored by mission time
 - [x] Pulsarite: acceleration, braking and survey stops; usernames claimable without mining
 - [x] Pulsarite: per-leg cruise speeds, fuel budget and survey time
+- [x] Pulsarite: planet-weighted survey stops; Nebulite: mission types and dates; web map on every node

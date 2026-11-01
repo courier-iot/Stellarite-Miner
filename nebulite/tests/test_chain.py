@@ -207,6 +207,34 @@ class ChainTests(unittest.TestCase):
         self.assertGreater(ch.effective_target(t["target"], tr["cost"], tr["baseline"]), int(t["target"], 16))
         self.bc.add_block(mine(t, tr), now=self.clock() - 1)
 
+    def test_mission_types(self):
+        import hashlib
+        seen = {}
+        for k in range(200):
+            h = hashlib.sha256(str(k).encode()).hexdigest()
+            p = T.problem(h)
+            seen.setdefault(p["type"], p)
+            mt = T.MISSION_TYPES[p["type"]]
+            self.assertEqual(p["time_penalty_mps_per_year"], mt["time_penalty_mps_per_year"])
+            self.assertEqual(p["max_tof_days"], int(T.MAX_TOF_YEARS[p["target"]] * 365.25 * mt["tof_share"]))
+        self.assertEqual(set(seen), {"science", "cargo", "crewed"})
+        # the same trajectory costs more when time is dear
+        b0 = T.baseline(h)                                # any real trajectory will do
+        seq, days = b0["seq"], b0["days"]
+        costs = {k: T.evaluate(seq, days, v["time_penalty_mps_per_year"])["cost"] for k, v in T.MISSION_TYPES.items()}
+        self.assertLess(costs["cargo"], costs["science"])
+        self.assertLess(costs["science"], costs["crewed"])
+        # crewed baselines respect the shorter limit
+        crewed = next(h for h in (hashlib.sha256(str(k).encode()).hexdigest() for k in range(200))
+                      if T.problem(h)["type"] == "crewed")
+        b = T.baseline(crewed)
+        self.assertLessEqual(b["days"][1] - b["days"][0], T.problem(crewed)["max_tof_days"])
+
+    def test_calendar_dates(self):
+        self.assertEqual(T.date_of(0), "2000-01-01")
+        self.assertEqual(T.date_of(9132), "2025-01-01")
+        self.assertEqual(T.date_of(-0.6), "1999-12-31")
+
     def test_missions_change_every_block(self):
         a = mine_next(self.bc, self.alice.addr, self.clock)
         b = mine_next(self.bc, self.alice.addr, self.clock)
@@ -340,12 +368,26 @@ class ApiTests(unittest.TestCase):
                              json={"job_id": old["job_id"], "seq": b["seq"], "days": b["days"], "nonce": 0})
         self.assertIn(r.status_code, (409, 410))
 
+    def test_web_map(self):
+        page = self.client.get("/map")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"map/data", page.data)          # relative, so it works behind /pulsarite/ or /nebulite/
+        self.mine_via_api(self.alice.addr)
+        d = self.client.get("/map/data").get_json()
+        self.assertEqual(d["height"], 1)
+        rows = d["missions"]
+        self.assertEqual(len(rows), 1)
+        self.assertGreater(len(rows[0]["points"]), 2)
+
     def test_mission_log(self):
         self.mine_via_api(self.alice.addr)
         rows = self.client.get("/missions").get_json()
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["path"][0], "Earth")
         self.assertGreaterEqual(rows[0]["improvement_pct"], 0)
+        self.assertIn(rows[0]["mission_type"], T.MISSION_TYPES)
+        self.assertRegex(rows[0]["arrival_date"], r"^20\d\d-\d\d-\d\d$")
+        self.assertEqual(rows[0]["encounters"][0]["planet"], "Earth")
 
     def test_bad_trajectory_refused(self):
         work = self.client.get(f"/mining/work?address={self.alice.addr}").get_json()

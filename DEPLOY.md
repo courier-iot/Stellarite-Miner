@@ -50,6 +50,7 @@ From any browser:
 
 - `https://nodes.example.com/nebulite/info`, which should show the Nebulite node's height
 - `https://nodes.example.com/pulsarite/info`
+- `https://nodes.example.com/pulsarite/map` and `https://nodes.example.com/nebulite/map`: the web maps, which you can share with anyone
 
 ## 5. Point the app at it
 

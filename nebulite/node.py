@@ -242,6 +242,7 @@ def mining_work():
         "job_id": job_id,
         "height": template["height"],
         "mission": prob,
+        "mission_about": T.MISSION_TYPES[prob["type"]]["about"],
         "baseline": {"seq": base["seq"], "days": base["days"], "cost": round(base["cost"])},
         "planets": T.planets_json(),
         "physics": T.physics_json(),
@@ -281,6 +282,7 @@ def mining_trajectory():
         "dv_kms": round(ev["dv_kms"], 3), "years": round(ev["years"], 2),
         "launch_kms": round(ev["launch_kms"], 3), "arrival_kms": round(ev["arrival_kms"], 3),
         "flyby_kms": [round(x, 3) for x in ev["flyby_kms"]],
+        "launch_date": T.date_of(body.get("days")[0]), "arrival_date": T.date_of(body.get("days")[-1]),
     })
 
 
@@ -314,6 +316,41 @@ def mining_submit():
 def planets():
     """Planet orbital elements and physics constants (for maps and miners)."""
     return jsonify({"planets": T.planets_json(), "physics": T.physics_json()})
+
+
+
+
+_MAP_HTML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "map.html")
+_map_cache = {}
+
+
+@app.get("/map")
+def map_page():
+    """A 3D map of the network's useful work, for any browser."""
+    with open(_MAP_HTML, encoding="utf-8") as f:
+        return app.response_class(f.read(), mimetype="text/html")
+
+
+@app.get("/map/data")
+def map_data():
+    """Everything the web map draws: planet orbits and recent missions' paths (AU)."""
+    limit = max(1, min(request.args.get("limit", 8, type=int), 30))
+    with lock:
+        key = (chain.tip["hash"], limit)
+        if key not in _map_cache:
+            rows = chain.mission_stats(limit)
+            ref = rows[0]["days"][0] if rows else T.WINDOW_START_MIN
+            for r in rows:
+                r["points"] = T.sample_path(r["seq"], r["days"])
+                for enc, p, d in zip(r["encounters"], r["seq"], r["days"]):
+                    enc["p"] = list(T.planet_state(p, d)[0])
+            _map_cache.clear()
+            _map_cache[key] = {
+                "coin": C.COIN_NAME, "ticker": C.TICKER, "height": len(chain.blocks) - 1,
+                "orbits": [{"name": T.PLANETS[i][0], "points": T.orbit_points(i, ref)} for i in range(len(T.PLANETS))],
+                "missions": rows,
+            }
+        return jsonify(_map_cache[key])
 
 
 @app.get("/missions")

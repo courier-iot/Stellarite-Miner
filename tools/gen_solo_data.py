@@ -61,6 +61,7 @@ def main():
     vxs = ", ".join(str(s["vx"]) for s in stars.CATALOG)
     vys = ", ".join(str(s["vy"]) for s in stars.CATALOG)
     vzs = ", ".join(str(s["vz"]) for s in stars.CATALOG)
+    planets = ", ".join(str(s["planets"]) for s in stars.CATALOG)
     pul = consts(PC, PC.ROUTE_BONUS_EXPONENT)
 
     NC, T = load("nebulite", "config", "trajectory")
@@ -70,6 +71,7 @@ def main():
         "targets": T.TARGETS, "max_tof_years": {str(k): v for k, v in T.MAX_TOF_YEARS.items()},
         "max_flybys": T.MAX_FLYBYS, "window_days": T.WINDOW_DAYS,
         "window_start_min": T.WINDOW_START_MIN, "window_start_spread": T.WINDOW_START_SPREAD,
+        "mission_types": T.MISSION_TYPES, "mission_draw": T.MISSION_DRAW,
     }, sort_keys=True)
 
     src = f'''package com.example.stellariteminer
@@ -98,6 +100,8 @@ object SoloData {{
     val STAR_VX = longArrayOf({vxs})
     val STAR_VY = longArrayOf({vys})
     val STAR_VZ = longArrayOf({vzs})
+    /** Confirmed planets in each system (longer surveys, likelier survey stops). */
+    val STAR_PLANETS = intArrayOf({planets})
     /** The probe: speed (mly per year), launch time (milli-years after J2000), intercept iterations. */
     const val PROBE_SPEED = {stars.SPEED}L
     /** Probe acceleration (mly/yr²) and survey stops per block. */
@@ -105,6 +109,8 @@ object SoloData {{
     const val SURVEY_STOPS = {stars.SURVEY_STOPS}
     /** Years spent at each survey stop; fuel budget and exhaust speed in % of light speed. */
     const val SURVEY_YEARS = {PC.SURVEY_YEARS}L
+    const val SURVEY_YEARS_PER_PLANET = {PC.SURVEY_YEARS_PER_PLANET}L
+    const val STOP_WEIGHT_PER_PLANET = {PC.STOP_WEIGHT_PER_PLANET}
     const val DV_BUDGET_PCT_C = {PC.DV_BUDGET_PCT_C}L
     const val EXHAUST_PCT_C = {PC.EXHAUST_PCT_C}L
     const val LAUNCH_T = {stars.LAUNCH_T}L

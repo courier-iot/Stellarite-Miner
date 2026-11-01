@@ -125,7 +125,7 @@ def score_trajectory(prev_hash: str, seq, days) -> dict:
     err = T.check(prob, seq, days)
     if err:
         raise ValidationError(err)
-    ev = T.evaluate(seq, days)
+    ev = T.evaluate(seq, days, prob["time_penalty_mps_per_year"])
     if ev is None:
         raise ValidationError("trajectory is not physically possible")
     return {"cost": round(ev["cost"]), "baseline": round(T.baseline(prev_hash)["cost"]), "eval": ev}
@@ -468,7 +468,8 @@ class Blockchain:
         out = []
         for b in reversed(self.blocks[1:][-limit:]):
             tr = b["trajectory"]
-            ev = T.evaluate(tr["seq"], tr["days"])
+            prob = T.problem(b["prev_hash"])
+            ev = T.evaluate(tr["seq"], tr["days"], prob["time_penalty_mps_per_year"])
             out.append({
                 "height": b["height"], "miner": b["txs"][0]["to"], "timestamp": b["timestamp"],
                 "miner_name": self.state.name_of.get(b["txs"][0]["to"]),
@@ -476,5 +477,8 @@ class Blockchain:
                 "dv_kms": round(ev["dv_kms"], 3), "years": round(ev["years"], 2),
                 "cost": tr["cost"], "baseline": tr["baseline"],
                 "improvement_pct": round(100 * (1 - tr["cost"] / tr["baseline"]), 2),
+                "mission_type": prob["type"],
+                "launch_date": T.date_of(tr["days"][0]), "arrival_date": T.date_of(tr["days"][-1]),
+                "encounters": [{"planet": T.PLANETS[p][0], "date": T.date_of(d)} for p, d in zip(tr["seq"], tr["days"])],
             })
         return out

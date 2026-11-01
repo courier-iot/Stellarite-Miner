@@ -104,7 +104,7 @@ Version history, with each feature marked major, medium or minor: [CHANGELOG.md]
 
 ## Useful work: star routes
 
-**The problem.** Each block's 24 stars are picked from the previous block's hash, so nobody can work on a block's route before that block exists. A probe launches from rest at the Sun in **2100** and must visit every star once. A route is a list of stars **and a cruise speed for each leg**, from 1% to 10% of light speed. The probe speeds up or slows down at a steady 0.03 g (0 to 10% of c takes 10 years and half a light-year), and flies past most stars at whatever speed it has. Four of each block's stars are **survey stops**, also picked from the hash: the probe must brake to a halt at each one, **survey it for 5 years** (riding along with the star as it moves), then speed up again. If it's moving too fast to stop in time, it overshoots and comes back.
+**The problem.** Each block's 24 stars are picked from the previous block's hash, so nobody can work on a block's route before that block exists. A probe launches from rest at the Sun in **2100** and must visit every star once. A route is a list of stars **and a cruise speed for each leg**, from 1% to 10% of light speed. The probe speeds up or slows down at a steady 0.03 g (0 to 10% of c takes 10 years and half a light-year), and flies past most stars at whatever speed it has. Four of each block's stars are **survey stops**, also picked from the hash: the probe must brake to a halt at each one, **survey it for 5 years plus 2 years per known planet** (riding along with the star as it moves), then speed up again. Stops favour **planetary systems**: a star's chance of being a stop is 1 + 3 × its number of confirmed planets, so TRAPPIST-1 (7 planets) is 22 times likelier than a star with none, and about 84% of stops are planet hosts. Planet counts come from Wikipedia's list of nearest exoplanets (confirmed planets only, November 2026). If it's moving too fast to stop in time, it overshoots and comes back.
 
 **Fuel.** Every change of speed burns fuel. The probe's total speed change over the mission (its delta-v) must fit a budget of **50% of light speed**; a route that needs more is invalid. Flying everything at top speed would need about 90%, so a good route decides where speed is worth the fuel: fast on long runs of flybys, slower on legs into and out of stops (each stop costs the speed you arrive with plus the speed you leave with). The node also reports the **mass ratio** this implies by the rocket equation (an advanced fusion drive with 10%-of-c exhaust): typically about 150 tonnes of launch mass per tonne of probe.
 
@@ -209,14 +209,15 @@ Nodes forward new blocks and transactions to each other and re-sync every 30 sec
 | POST | `/mining/route` | `{ "job_id", "route": [[star id, cruise % of c], …] }` → header prefix and the route's target |
 | POST | `/mining/submit` | `{ "job_id", "route", "nonce" }` |
 | GET | `/routes?limit=20` | the route map: recent blocks' routes, lengths, improvement |
-| GET | `/stars` | the star catalog in use |
+| GET | `/stars` | the star catalog in use (with `planets` per star) |
+| GET | `/map` | the web map page; `/map/data` is its data |
 | POST | `/chain/import` | offer a whole chain (e.g. from solo mode); adopted if valid and longer |
 | GET | `/name/<name>` | the address that owns a username |
 | GET | `/names` | every claimed username |
 
 `GET /mining/work` takes an optional `&name=` to claim a username in the block's coinbase; `/balance/<address>` includes the address's `name`.
 
-Nebulite's node has the same transaction, balance, chain and peer endpoints, plus `GET /mining/work`, `POST /mining/trajectory` (`{job_id, seq, days}`), `POST /mining/submit` (`{job_id, seq, days, nonce}`), `GET /missions` and `GET /planets` (orbital elements and physics constants).
+Nebulite's node has the same transaction, balance, chain and peer endpoints, plus `GET /mining/work`, `POST /mining/trajectory` (`{job_id, seq, days}`), `POST /mining/submit` (`{job_id, seq, days, nonce}`), `GET /missions`, `GET /planets` (orbital elements and physics constants) and the same `/map` and `/map/data`.
 | GET/POST | `/peers` | list / add peers |
 | POST | `/blocks` | peers announce new blocks |
 
@@ -244,13 +245,23 @@ python miner.py --address nblt…      # optional: mine from the computer
 
 In the app, pick the **NBLT** chip, enter `http://<your computer's IP>:5001` and your `nblt…` address.
 
-**The problem.** Each block's mission comes from the previous block's hash: get a spacecraft from Earth to Jupiter, Saturn, Uranus or Neptune, launching inside a 4-year window somewhere in 2025–2039, within a maximum flight time (8 to 30 years, depending on the target). Miners choose which planets to fly past on the way (Venus, Earth, Mars, and Jupiter or Saturn when they're on the way) and the date of each encounter.
+**The problem.** Each block's mission comes from the previous block's hash: get a spacecraft from Earth to Jupiter, Saturn, Uranus or Neptune, launching inside a 4-year window somewhere in 2025–2039, within a maximum flight time (8 to 30 years, depending on the target).
+
+**Mission types.** The hash also picks what's flying, which changes how much time is worth:
+
+| Type | Share of blocks | A year of travel costs | Flight time allowed |
+|---|---|---|---|
+| Science (robotic probe) | 1 in 2 | 250 m/s | full (8–30 years) |
+| Cargo (supplies) | 1 in 4 | 50 m/s | full |
+| Crewed (people aboard) | 1 in 4 | 3,000 m/s | half (4–15 years) |
+
+So the same block-to-block skill pays off differently: cargo missions favour long, fuel-saving loops past several planets, crewed missions favour fast, direct burns. Miners choose which planets to fly past on the way (Venus, Earth, Mars, and Jupiter or Saturn when they're on the way) and the date of each encounter.
 
 **The cost** is what a mission planner cares about, in m/s of rocket effort:
 - departure speed from Earth (what the launcher must supply)
 - fuel burned at each flyby: making up speed differences, or turning harder than the planet's gravity allows at a safe distance (1.1 planet radii)
 - arrival speed at the target (what must be shed to stop)
-- travel time: each year of flight counts as 250 m/s
+- travel time: each year of flight counts as 50, 250 or 3,000 m/s, depending on the mission type
 
 Planets follow **real orbits**: JPL's approximate Keplerian elements with their slow drift over time, giving elliptical, tilted orbits in 3D (valid 1800–2050). Checked against reality, the model puts Mars-through-Neptune oppositions within a day of the real dates and Mars' 2003 close approach within 0.0003 AU. Flown on their actual dates, Voyager 1 and 2 need almost no fuel at their flybys, just as in reality.
 
@@ -260,9 +271,9 @@ Each leg between planets is solved with Lambert's problem, the standard tool for
 
 **Fair checking.** Costs involve floating-point maths, which can differ in the last digit between computers. Blocks therefore carry their claimed cost, and nodes accept it within 1 m/s of their own result, so rounding can never split the network. (The phone's Kotlin physics matches the node's Python to 0.000005 m/s across 3,600 test trajectories.)
 
-**On the phone.** The rig plans each new mission for about 3 seconds, searching every flyby sequence with up to 2 flybys, then keeps refining every 10 seconds while it hashes. The HUD shows the live plan, e.g. `MISSION E-J-S · 11.53 KM/S · 8.6 YR · 20.7% CHEAPER THAN DIRECT`, and the ledger records missions planned and your best mission.
+**On the phone.** The rig plans each new mission for about 3 seconds, searching every flyby sequence with up to 2 flybys, then keeps refining every 10 seconds while it hashes. The HUD shows the live plan, e.g. `SCIENCE MISSION E-J-S · 11.53 KM/S · 8.6 YR · ARRIVES 2041-03-14 · 20.7% CHEAPER THAN DIRECT`, and the ledger records missions planned and your best mission.
 
-**The mission log.** `GET /missions` lists recent blocks' trajectories: planet path, encounter days, Δv, years and improvement.
+**The mission log.** `GET /missions` lists recent blocks' trajectories: mission type, planet path, encounter days and calendar dates (`launch_date`, `arrival_date`, `encounters`), Δv, years and improvement. `GET /mining/work` includes the mission's `type` and `time_penalty_mps_per_year`.
 
 **Limits today.** There are no deep-space engine burns or multi-loop transfers, arrival is scored as arrival speed rather than orbit insertion, and the orbital elements are fitted for 1800–2050, so very late arrivals lose some accuracy. ROADMAP.md covers each of these.
 
@@ -276,7 +287,11 @@ A rotating 3D map of the useful work. Drag to rotate, pinch to zoom (star names 
 - **PLSR, star map:** every catalog star around the Sun with distance rings at 10, 20, 30 and 40 light-years. Recently mined routes are drawn in crimson, and the route your rig is optimising right now is drawn in amber, with its stars highlighted.
 - **NBLT, orbit map:** the planets' real orbits, with distances compressed so Mercury and Neptune both fit on screen. Recently mined missions are in crimson, and your rig's live mission plan is in amber, with each encounter labelled (e.g. `FLYBY JUPITER 2041`).
 
-The map loads from the selected coin's node (`/stars` + `/routes`, or `/planets` + `/missions`). Tap **[REFRESH]** after changing nodes. It isn't available for pool coins.
+The map loads from the selected coin's node (`/stars` + `/routes`, or `/planets` + `/missions`). Tap **[REFRESH]** after changing nodes. It isn't available for pool coins. Stars with known planets are marked ● with their count.
+
+## The web map
+
+Every node also serves the map as a web page at **`/map`**, so anyone can watch the network's work in a browser without the app: `http://<your computer's IP>:5000/map` for Pulsarite, `:5001/map` for Nebulite, or `https://your-domain/pulsarite/map` and `https://your-domain/nebulite/map` on a cloud server. Drag to rotate, scroll or pinch to zoom, tap a star, planet or flyby for details, and pick a block from the list to highlight its route or mission. It refreshes every 30 seconds. Distances are compressed (square root) so near and far objects both fit; directions are true. The page gets its data from `GET /map/data`.
 
 ## Known limitations (good next steps)
 

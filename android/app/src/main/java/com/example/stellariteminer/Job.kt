@@ -52,9 +52,12 @@ data class TrajectoryInfo(
     val dvKms: Double,
     val years: Double,
     val improvementPct: Double,
+    val missionType: String = "science",
 ) : UsefulWork {
+    val arrivalDate get() = TrajectoryModel.dateOf(days.last())
     override val summary get() = String.format(java.util.Locale.US,
-        "MISSION %s · %.2f KM/S · %.1f YR · %.1f%% CHEAPER THAN DIRECT", path, dvKms, years, improvementPct)
+        "%s MISSION %s · %.2f KM/S · %.1f YR · ARRIVES %s · %.1f%% CHEAPER THAN DIRECT",
+        missionType.uppercase(java.util.Locale.US), path, dvKms, years, arrivalDate, improvementPct)
     override val gainPct get() = improvementPct
 }
 

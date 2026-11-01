@@ -247,6 +247,7 @@ def mining_work():
         "baseline_route": baseline,
         "baseline_years": stars.route_time(baseline, stop_ids) / 1000,
         "survey_years": C.SURVEY_YEARS,
+        "survey_years_per_planet": C.SURVEY_YEARS_PER_PLANET,
         "dv_budget_pct_c": C.DV_BUDGET_PCT_C,
         "probe_speed_mly_per_year": stars.SPEED,
         "probe_accel_mly_per_year2": C.PROBE_ACCEL_MLY_PER_YEAR2,
@@ -317,6 +318,42 @@ def mining_submit():
 
 # ---- the route map ------------------------------------------------------
 
+
+
+_MAP_HTML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "map.html")
+_map_cache = {}
+
+
+@app.get("/map")
+def map_page():
+    """A 3D map of the network's useful work, for any browser."""
+    with open(_MAP_HTML, encoding="utf-8") as f:
+        return app.response_class(f.read(), mimetype="text/html")
+
+
+@app.get("/map/data")
+def map_data():
+    """Everything the web map draws: stars at launch, recent routes through their intercept points."""
+    limit = max(1, min(request.args.get("limit", 12, type=int), 50))
+    with lock:
+        key = (chain.tip["hash"], limit)
+        if key not in _map_cache:
+            rows = chain.route_stats(limit)
+            for r, b in zip(rows, reversed(chain.blocks[1:][-limit:])):
+                legs = stars.route_legs(b["route"], stars.stops(b["prev_hash"]))
+                r["points"] = [[0, 0, 0]] + [[c / 1000 for c in stars.pos(l[0], l[1])] for l in legs]
+                r["arrive_years"] = [l[1] / 1000 + 2000 for l in legs]
+            _map_cache.clear()
+            _map_cache[key] = {
+                "coin": C.COIN_NAME, "ticker": C.TICKER, "height": len(chain.blocks) - 1,
+                "launch_year": C.LAUNCH_YEAR,
+                "stars": [{"id": s["id"], "name": s["name"], "planets": s["planets"],
+                           "p": [c / 1000 for c in stars.pos(s["id"], stars.LAUNCH_T)]} for s in stars.CATALOG],
+                "routes": rows,
+            }
+        return jsonify(_map_cache[key])
+
+
 @app.get("/routes")
 def routes():
     """Recent blocks' star routes: the map the network is building."""
@@ -332,6 +369,7 @@ def star_catalog():
                     "probe_speed_mly_per_year": stars.SPEED, "launch_t": stars.LAUNCH_T,
                     "probe_accel_mly_per_year2": C.PROBE_ACCEL_MLY_PER_YEAR2,
                     "survey_stops": stars.SURVEY_STOPS, "survey_years": C.SURVEY_YEARS,
+                    "survey_years_per_planet": C.SURVEY_YEARS_PER_PLANET,
                     "dv_budget_pct_c": C.DV_BUDGET_PCT_C,
                     "intercept_iterations": stars.INTERCEPT_ITERATIONS})
 

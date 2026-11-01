@@ -125,10 +125,12 @@ class MapPage(
                 for (i in SoloData.STAR_NAMES.indices) a.put(JSONObject().put("id", i)
                     .put("name", SoloData.STAR_NAMES[i]).put("x", SoloData.STAR_X[i]).put("y", SoloData.STAR_Y[i])
                     .put("z", SoloData.STAR_Z[i]).put("vx", SoloData.STAR_VX[i]).put("vy", SoloData.STAR_VY[i])
-                    .put("vz", SoloData.STAR_VZ[i]))
+                    .put("vz", SoloData.STAR_VZ[i]).put("planets", SoloData.STAR_PLANETS[i]))
             }
             probe = JSONObject().put("probe_speed_mly_per_year", SoloData.PROBE_SPEED)
                 .put("probe_accel_mly_per_year2", SoloData.PROBE_ACCEL)
+                .put("survey_years", SoloData.SURVEY_YEARS).put("survey_years_per_planet", SoloData.SURVEY_YEARS_PER_PLANET)
+                .put("dv_budget_pct_c", SoloData.DV_BUDGET_PCT_C)
                 .put("launch_t", SoloData.LAUNCH_T).put("intercept_iterations", SoloData.INTERCEPT_ITERATIONS)
             routes = SoloBackend.routeRows(chain, 12)
         } else {
@@ -181,7 +183,9 @@ class MapPage(
         return StarField(ids, col("x"), col("y"), col("z"),
             col("vx"), col("vy"), col("vz"), p.getLong("probe_speed_mly_per_year"), p.getLong("launch_t"),
             p.getInt("intercept_iterations"), p.optLong("probe_accel_mly_per_year2", SoloData.PROBE_ACCEL),
-            BooleanArray(n) { ids[it] in stopIds })
+            BooleanArray(n) { ids[it] in stopIds }, p.optLong("survey_years", SoloData.SURVEY_YEARS),
+            p.optLong("dv_budget_pct_c", SoloData.DV_BUDGET_PCT_C),
+            IntArray(n) { cat.getJSONObject(it).optInt("planets", 0) }, p.optLong("survey_years_per_planet", 0))
     }
 
     private fun intList(a: JSONArray?): List<Int> = a?.let { arr -> List(arr.length()) { arr.getInt(it) } } ?: emptyList()
@@ -230,7 +234,7 @@ class MapPage(
                 newest.optString("miner_name", "").let { if (it.isNotEmpty() && it != "null") " · BY $it" else "" }))
             val w = shownWork as? RouteInfo
             if (live != null && w != null) append(String.format(Locale.US, "\n> LIVE ROUTE (AMBER): %,.0f YR · %d SURVEY STOPS (◆) · FUEL %.0f%%", w.years, w.stopIds.size, w.fuelUsedPct))
-            else if (focusStops.isNotEmpty()) append("\n> ${focusStops.size} SURVEY STOPS (◆): THE PROBE BRAKES TO A HALT AND SURVEYS FOR ${SoloData.SURVEY_YEARS} YEARS")
+            else if (focusStops.isNotEmpty()) append("\n> ${focusStops.size} SURVEY STOPS (◆): THE PROBE BRAKES TO A HALT AND SURVEYS ${SoloData.SURVEY_YEARS} YEARS + ${SoloData.SURVEY_YEARS_PER_PLANET} PER PLANET (●)")
             if (focusLegs.isNotEmpty()) append("\n> SLIDE TO FLY THE $focusLabel · TAP A STAR FOR DETAILS")
             else append("\n> TAP A STAR FOR DETAILS · DRAG TO ROTATE · PINCH TO ZOOM")
         }
@@ -263,6 +267,8 @@ class MapPage(
                 append(name.uppercase(Locale.US))
                 append(String.format(Locale.US, "\nDistance from the Sun in %s: %.2f ly", yearText(t), distNow))
                 append(String.format(Locale.US, "\nSpace velocity: %.0f km/s", kms))
+                val np = sp.optInt("planets", 0)
+                append(if (np > 0) "\nKnown planets: $np (a likely survey stop)" else "\nNo planets known yet")
                 if (leg != null) {
                     val stop = id in focusStops
                     append(String.format(Locale.US, "\nProbe %s: %s (star %d of %d)", if (stop) "arrives and stops" else "flyby",
@@ -275,7 +281,8 @@ class MapPage(
             }
             points += MapPoint(p[0] / 1000.0, p[1] / 1000.0, p[2] / 1000.0,
                 when { leg == null -> Theme.TEXT; visited -> Theme.AMBER; else -> Theme.CRIMSON_LIGHT },
-                if (leg != null) 3.2f else 1.8f, (if (id in focusStops) "◆ " else "") + name.uppercase(Locale.US),
+                if (leg != null) 3.2f else 1.8f,
+                (if (id in focusStops) "◆ " else "") + name.uppercase(Locale.US) + (if (sp.optInt("planets", 0) > 0) " ●${sp.optInt("planets")}" else ""),
                 alwaysLabel = (leg != null && timeF > 0 && visited) || id in focusStops,
                 glow = leg != null, info = details, key = "star$id")
         }
@@ -361,12 +368,20 @@ class MapPage(
             append("\n> ${ms.length()} MINED MISSIONS (CRIMSON)")
             if (newest != null) {
                 val path = newest.getJSONArray("path").let { a -> (0 until a.length()).joinToString("-") { a.getString(it).take(2).uppercase(Locale.US) } }
-                append(String.format(Locale.US, "\n> LATEST: BLOCK %d · %s · %.2f KM/S · %.1f YR%s",
-                    newest.getInt("height"), path, newest.getDouble("dv_kms"), newest.getDouble("years"),
+                append(String.format(Locale.US, "\n> LATEST: BLOCK %d · %s %s · %.2f KM/S · %.1f YR · ARRIVES %s%s",
+                    newest.getInt("height"), newest.optString("mission_type", "science").uppercase(Locale.US), path,
+                    newest.getDouble("dv_kms"), newest.getDouble("years"),
+                    newest.optString("arrival_date", TrajectoryModel.dateOf(newest.getJSONArray("days").let { it.getInt(it.length() - 1) })),
                     newest.optString("miner_name", "").let { if (it.isNotEmpty() && it != "null") " · BY $it" else "" }))
             }
-            if (live != null) append("\n> LIVE PLAN (AMBER): ${live.path} · " +
-                String.format(Locale.US, "%.2f KM/S · %.1f YR", live.dvKms, live.years))
+            if (live != null) append("\n> LIVE PLAN (AMBER): ${live.missionType.uppercase(Locale.US)} ${live.path} · " +
+                String.format(Locale.US, "%.2f KM/S · %.1f YR · ARRIVES %s", live.dvKms, live.years, live.arrivalDate))
+            val kind = live?.missionType ?: newest?.optString("mission_type", "")
+            when (kind) {
+                "crewed" -> append("\n> CREWED: EVERY YEAR AWAY COSTS AS MUCH AS 3 KM/S, AND TRIPS ARE CAPPED AT HALF LENGTH")
+                "cargo" -> append("\n> CARGO: SLOW IS FINE (50 M/S PER YEAR); FUEL IS EVERYTHING")
+                "science" -> append("\n> SCIENCE: FUEL AND TIME BOTH MATTER (250 M/S PER YEAR)")
+            }
             append(if (focusSeq != null) "\n> SLIDE TO FLY THE $focusName · TAP A PLANET FOR DETAILS"
                 else "\n> TAP A PLANET FOR DETAILS · DRAG TO ROTATE · PINCH TO ZOOM")
         }
@@ -400,7 +415,7 @@ class MapPage(
                 val what = when (k) { 0 -> "LAUNCH"; seq.size - 1 -> "ARRIVE"; else -> "FLYBY" }
                 val name = m.planets[seq[k]].name.uppercase(Locale.US)
                 points += MapPoint(p[0], p[1], p[2], if (days[k] <= day) Theme.AMBER else Theme.CRIMSON_LIGHT, 3f,
-                    "$what $name ${2000 + ((days[k] + 0.5) / 365.25).toInt()}", alwaysLabel = true, glow = true,
+                    "$what $name ${TrajectoryModel.dateOf(days[k]).take(4)}", alwaysLabel = true, glow = true,
                     info = "$what: $name\n${dateText(days[k].toDouble())} (mission day ${days[k] - days.first()})", key = "enc$k")
             }
             if (timeF > 0) m.positionAt(seq, days, day)?.let { sc ->

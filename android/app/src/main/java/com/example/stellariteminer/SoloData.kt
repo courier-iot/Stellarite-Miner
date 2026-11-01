@@ -16,7 +16,7 @@ object SoloData {
         maxRetargetFactor = 4,
         genesisDifficultyBits = 20,
         genesisTimestamp = 1790812800L,
-        genesisMessage = "Pulsarite genesis v4 - fuel budgets, cruise speeds and survey time",
+        genesisMessage = "Pulsarite genesis v5 - surveys of planetary systems",
         bonusExponent = 12,
     )
 
@@ -32,11 +32,11 @@ object SoloData {
         maxRetargetFactor = 4,
         genesisDifficultyBits = 20,
         genesisTimestamp = 1790812800L,
-        genesisMessage = "Nebulite genesis - planning paths between the planets",
+        genesisMessage = "Nebulite genesis v2 - science, cargo and crewed missions",
         bonusExponent = 12,
     )
 
-    /** Pulsarite's star catalog (built-in, id 4447d3718b3e1596): positions in milli-light-years. */
+    /** Pulsarite's star catalog (built-in, id 39d027854e94cf54): positions in milli-light-years. */
     const val STARS_PER_PROBLEM = 24
     val STAR_NAMES = arrayOf(
         "Proxima Centauri",
@@ -99,6 +99,8 @@ object SoloData {
     val STAR_VX = longArrayOf(-31, -32, -19, -33, 119, 29, 31, 22, -130, 72, 145, 101, -108, -47, 38, -89, 0, 23, -65, 8, -70, 73, -61, 64, -328, -126, 168, -63, 27, 174, -46, 33, -28, 48, 4, -19, 82, 20, -3, 121, 37, -55, 30, -73, 127, 15, 20, 87, -191, -140, 9, 50)
     val STAR_VY = longArrayOf(74, 74, 392, 161, -6, -27, 170, 42, 16, 14, 327, -38, 173, 360, 12, 73, 163, 73, 285, -107, -23, 99, 61, 346, 403, -161, -1, -23, 82, 124, 387, 31, -47, 47, 73, 9, -235, 20, 101, -144, 113, 386, 172, 102, -25, 62, 36, 58, 105, 222, 135, 184)
     val STAR_VZ = longArrayOf(73, 71, 268, -96, -322, -43, -6, 6, -238, -8, 39, -67, 169, 4, -59, 48, 44, -13, 32, 62, 34, 9, -215, -155, -830, -100, 17, -103, -63, -167, -175, -108, -124, -36, -47, -75, -249, -89, 18, 29, -3, -147, 23, -6, -32, -2, -28, -2, -341, -76, 10, -6)
+    /** Confirmed planets in each system (longer surveys, likelier survey stops). */
+    val STAR_PLANETS = intArrayOf(2, 0, 4, 0, 2, 0, 0, 0, 0, 1, 4, 1, 0, 0, 0, 2, 2, 0, 1, 0, 3, 3, 2, 3, 0, 0, 0, 0, 3, 0, 0, 0, 2, 1, 4, 1, 0, 0, 0, 0, 0, 3, 0, 3, 2, 0, 0, 1, 0, 7, 0, 0)
     /** The probe: speed (mly per year), launch time (milli-years after J2000), intercept iterations. */
     const val PROBE_SPEED = 100L
     /** Probe acceleration (mly/yr²) and survey stops per block. */
@@ -106,6 +108,8 @@ object SoloData {
     const val SURVEY_STOPS = 4
     /** Years spent at each survey stop; fuel budget and exhaust speed in % of light speed. */
     const val SURVEY_YEARS = 5L
+    const val SURVEY_YEARS_PER_PLANET = 2L
+    const val STOP_WEIGHT_PER_PLANET = 3
     const val DV_BUDGET_PCT_C = 50L
     const val EXHAUST_PCT_C = 10L
     const val LAUNCH_T = 100000L
@@ -113,5 +117,5 @@ object SoloData {
 
     /** Nebulite planet orbits and physics (same JSON the node serves at /planets). */
     const val NEBULITE_MODEL_JSON = "{\"physics\": {\"au_per_day_to_kms\": 1731.45683681, \"flyby_safety\": 1.1, \"kepler_iterations\": 12, \"min_flyby_vinf\": 1.0, \"min_leg_days\": 20, \"min_perihelion_au\": 0.3, \"mu_sun\": 0.0002959122082855911, \"time_penalty_mps_per_year\": 250}, \"planets\": [{\"code\": \"Me\", \"elements\": {\"a\": 0.38709927, \"e\": 0.20563593, \"i\": 7.00497902, \"l\": 252.2503235, \"node\": 48.33076593, \"peri\": 77.45779628}, \"gm\": 22032.0, \"id\": 0, \"name\": \"Mercury\", \"radius_km\": 2440.0, \"rates\": {\"a\": 3.7e-07, \"e\": 1.906e-05, \"i\": -0.00594749, \"l\": 149472.67411175, \"node\": -0.12534081, \"peri\": 0.16047689}}, {\"code\": \"V\", \"elements\": {\"a\": 0.72333566, \"e\": 0.00677672, \"i\": 3.39467605, \"l\": 181.9790995, \"node\": 76.67984255, \"peri\": 131.60246718}, \"gm\": 324859.0, \"id\": 1, \"name\": \"Venus\", \"radius_km\": 6052.0, \"rates\": {\"a\": 3.9e-06, \"e\": -4.107e-05, \"i\": -0.0007889, \"l\": 58517.81538729, \"node\": -0.27769418, \"peri\": 0.00268329}}, {\"code\": \"E\", \"elements\": {\"a\": 1.00000261, \"e\": 0.01671123, \"i\": -1.531e-05, \"l\": 100.46457166, \"node\": 0.0, \"peri\": 102.93768193}, \"gm\": 398600.0, \"id\": 2, \"name\": \"Earth\", \"radius_km\": 6371.0, \"rates\": {\"a\": 5.62e-06, \"e\": -4.392e-05, \"i\": -0.01294668, \"l\": 35999.37244981, \"node\": 0.0, \"peri\": 0.32327364}}, {\"code\": \"Ma\", \"elements\": {\"a\": 1.52371034, \"e\": 0.0933941, \"i\": 1.84969142, \"l\": -4.55343205, \"node\": 49.55953891, \"peri\": -23.94362959}, \"gm\": 42828.0, \"id\": 3, \"name\": \"Mars\", \"radius_km\": 3390.0, \"rates\": {\"a\": 1.847e-05, \"e\": 7.882e-05, \"i\": -0.00813131, \"l\": 19140.30268499, \"node\": -0.29257343, \"peri\": 0.44441088}}, {\"code\": \"J\", \"elements\": {\"a\": 5.202887, \"e\": 0.04838624, \"i\": 1.30439695, \"l\": 34.39644051, \"node\": 100.47390909, \"peri\": 14.72847983}, \"gm\": 126686534.0, \"id\": 4, \"name\": \"Jupiter\", \"radius_km\": 69911.0, \"rates\": {\"a\": -0.00011607, \"e\": -0.00013253, \"i\": -0.00183714, \"l\": 3034.74612775, \"node\": 0.20469106, \"peri\": 0.21252668}}, {\"code\": \"S\", \"elements\": {\"a\": 9.53667594, \"e\": 0.05386179, \"i\": 2.48599187, \"l\": 49.95424423, \"node\": 113.66242448, \"peri\": 92.59887831}, \"gm\": 37931187.0, \"id\": 5, \"name\": \"Saturn\", \"radius_km\": 58232.0, \"rates\": {\"a\": -0.0012506, \"e\": -0.00050991, \"i\": 0.00193609, \"l\": 1222.49362201, \"node\": -0.28867794, \"peri\": -0.41897216}}, {\"code\": \"U\", \"elements\": {\"a\": 19.18916464, \"e\": 0.04725744, \"i\": 0.77263783, \"l\": 313.23810451, \"node\": 74.01692503, \"peri\": 170.9542763}, \"gm\": 5793939.0, \"id\": 6, \"name\": \"Uranus\", \"radius_km\": 25362.0, \"rates\": {\"a\": -0.00196176, \"e\": -4.397e-05, \"i\": -0.00242939, \"l\": 428.48202785, \"node\": 0.04240589, \"peri\": 0.40805281}}, {\"code\": \"N\", \"elements\": {\"a\": 30.06992276, \"e\": 0.00859048, \"i\": 1.77004347, \"l\": -55.12002969, \"node\": 131.78422574, \"peri\": 44.96476227}, \"gm\": 6836529.0, \"id\": 7, \"name\": \"Neptune\", \"radius_km\": 24622.0, \"rates\": {\"a\": 0.00026291, \"e\": 5.105e-05, \"i\": 0.00035372, \"l\": 218.45945325, \"node\": -0.00508664, \"peri\": -0.32241464}}]}"
-    const val NEBULITE_MISSION_RULES_JSON = "{\"max_flybys\": 3, \"max_tof_years\": {\"4\": 8, \"5\": 12, \"6\": 20, \"7\": 30}, \"targets\": [4, 5, 6, 7], \"window_days\": 1461, \"window_start_min\": 9131, \"window_start_spread\": 3650}"
+    const val NEBULITE_MISSION_RULES_JSON = "{\"max_flybys\": 3, \"max_tof_years\": {\"4\": 8, \"5\": 12, \"6\": 20, \"7\": 30}, \"mission_draw\": [\"science\", \"science\", \"cargo\", \"crewed\"], \"mission_types\": {\"cargo\": {\"about\": \"supplies: slow is fine, fuel is everything\", \"time_penalty_mps_per_year\": 50, \"tof_share\": 1.0}, \"crewed\": {\"about\": \"people aboard: every year costs dearly, and trips must be short\", \"time_penalty_mps_per_year\": 3000, \"tof_share\": 0.5}, \"science\": {\"about\": \"robotic probe: fuel and time both matter\", \"time_penalty_mps_per_year\": 250, \"tof_share\": 1.0}}, \"targets\": [4, 5, 6, 7], \"window_days\": 1461, \"window_start_min\": 9131, \"window_start_spread\": 3650}"
 }

@@ -24,12 +24,18 @@ class StarField(
     surveyYears: Long = SoloData.SURVEY_YEARS,
     /** Fuel: total speed change allowed, in % of light speed. */
     dvBudgetPct: Long = SoloData.DV_BUDGET_PCT_C,
+    /** Confirmed planets per star: each adds [perPlanetYears] to a survey there. */
+    val planets: IntArray = IntArray(ids.size),
+    perPlanetYears: Long = SoloData.SURVEY_YEARS_PER_PLANET,
 ) {
     val size get() = ids.size
     private val V = speed * 1000          // top cruise speed, uly/yr
     private val A = accel * 1000          // uly/yr²
     val pct = V / 10                      // 1% of c in uly/yr
     private val surveyT = surveyYears * 1000
+    private val perPlanetT = perPlanetYears * 1000
+    /** Milli-years surveying star i (as stars.survey_t). */
+    fun surveyFor(i: Int) = surveyT + perPlanetT * planets[i]
     val dvBudget = dvBudgetPct * pct
 
     /** Position of star i (local index) at time t (milli-years after J2000). */
@@ -94,7 +100,7 @@ class StarField(
         return order.mapIndexed { k, i ->
             val r = intercept(here, t, i, u, speeds[k] * pct)
             val at = pos(i, r[0])
-            t = if (stop[i]) r[0] + surveyT else r[0]
+            t = if (stop[i]) r[0] + surveyFor(i) else r[0]
             here = if (stop[i]) pos(i, t) else at
             u = r[1]
             Leg(i, r[0], at, r[1], r[2], t, here, speeds[k])
@@ -107,7 +113,7 @@ class StarField(
         for (k in order.indices) {
             val i = order[k]
             val r = intercept(here, t, i, u, speeds[k] * pct)
-            t = if (stop[i]) r[0] + surveyT else r[0]
+            t = if (stop[i]) r[0] + surveyFor(i) else r[0]
             here = pos(i, t); u = r[1]; dv += r[2]
         }
         return longArrayOf(t - launchT, dv)
@@ -134,7 +140,7 @@ class StarField(
             val best = left.minWith(compareBy<Int>({ intercept(here, t, it, u, c)[0] }, { ids[it] }))
             left.remove(best)
             val r = intercept(here, t, best, u, c)
-            t = if (stop[best]) r[0] + surveyT else r[0]
+            t = if (stop[best]) r[0] + surveyFor(best) else r[0]
             here = pos(best, t); u = r[1]
             out += best
         }
@@ -179,7 +185,9 @@ class StarField(
                 work.optLong("probe_accel_mly_per_year2", SoloData.PROBE_ACCEL),
                 BooleanArray(n) { ids[it] in stopIds },
                 work.optLong("survey_years", SoloData.SURVEY_YEARS),
-                work.optLong("dv_budget_pct_c", SoloData.DV_BUDGET_PCT_C))
+                work.optLong("dv_budget_pct_c", SoloData.DV_BUDGET_PCT_C),
+                IntArray(n) { st.getJSONObject(it).optInt("planets", 0) },
+                work.optLong("survey_years_per_planet", 0))
         }
 
         /** From the built-in catalog (solo mode), for the given star ids and survey stops. */
@@ -188,7 +196,8 @@ class StarField(
             return StarField(ids.toIntArray(), col(SoloData.STAR_X), col(SoloData.STAR_Y), col(SoloData.STAR_Z),
                 col(SoloData.STAR_VX), col(SoloData.STAR_VY), col(SoloData.STAR_VZ),
                 SoloData.PROBE_SPEED, SoloData.LAUNCH_T, SoloData.INTERCEPT_ITERATIONS,
-                SoloData.PROBE_ACCEL, BooleanArray(ids.size) { ids[it] in stopIds })
+                SoloData.PROBE_ACCEL, BooleanArray(ids.size) { ids[it] in stopIds },
+                planets = IntArray(ids.size) { SoloData.STAR_PLANETS[ids[it]] })
         }
     }
 }

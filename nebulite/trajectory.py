@@ -19,13 +19,14 @@ Model (see ROADMAP.md for what's next):
 
 Units: AU, days, km/s. Day numbers count from J2000 (2000-01-01 12:00 TT).
 """
+import datetime
 import hashlib
 import math
 from functools import lru_cache
 
 MU_SUN = 2.959122082855911e-4        # AU^3 / day^2
 AU_PER_DAY_TO_KMS = 1731.45683681
-TIME_PENALTY_MPS_PER_YEAR = 250      # 1 year of travel costs as much as 250 m/s of fuel
+TIME_PENALTY_MPS_PER_YEAR = 250      # default: 1 year of travel costs as much as 250 m/s of fuel
 MIN_LEG_DAYS = 20
 FLYBY_SAFETY = 1.1                   # closest approach: 1.1 planet radii
 MIN_FLYBY_VINF = 1.0                 # km/s: slower than this isn't a gravity assist
@@ -69,6 +70,25 @@ MAX_FLYBYS = 3
 WINDOW_DAYS = 1461                          # 4-year launch window
 WINDOW_START_MIN = 9131                     # ~2025-01-01
 WINDOW_START_SPREAD = 3650                  # windows start somewhere in 2025-2035
+
+# Mission types: how much a year of travel is worth in fuel, and the share of the
+# target's maximum flight time allowed. Picked per block from the hash, from this
+# list (science appears twice, so half of all missions are science missions).
+MISSION_TYPES = {
+    "science": {"time_penalty_mps_per_year": 250, "tof_share": 1.0,
+                "about": "robotic probe: fuel and time both matter"},
+    "cargo": {"time_penalty_mps_per_year": 50, "tof_share": 1.0,
+              "about": "supplies: slow is fine, fuel is everything"},
+    "crewed": {"time_penalty_mps_per_year": 3000, "tof_share": 0.5,
+               "about": "people aboard: every year costs dearly, and trips must be short"},
+}
+MISSION_DRAW = ["science", "science", "cargo", "crewed"]
+J2000 = datetime.datetime(2000, 1, 1, 12)        # day 0 of the mission calendar (J2000 epoch, noon)
+
+
+def date_of(day: float) -> str:
+    """Calendar date (YYYY-MM-DD) for a mission day number (days since J2000)."""
+    return (J2000 + datetime.timedelta(days=day)).date().isoformat()
 
 
 def elements(pid: int, day: float):
@@ -195,7 +215,7 @@ def flyby_dv(pid, vin, vout):
     return dv
 
 
-def evaluate(seq, days):
+def evaluate(seq, days, time_penalty=TIME_PENALTY_MPS_PER_YEAR):
     """Cost breakdown of a trajectory, or None if impossible.
 
     seq:  planet ids, Earth first, target last, flybys in between
@@ -230,7 +250,7 @@ def evaluate(seq, days):
     return {
         "launch_kms": launch, "flyby_kms": flybys, "arrival_kms": arrival,
         "dv_kms": dv, "years": years,
-        "cost": dv * 1000 + TIME_PENALTY_MPS_PER_YEAR * years,   # m/s-equivalent
+        "cost": dv * 1000 + time_penalty * years,   # m/s-equivalent
     }
 
 
@@ -257,11 +277,16 @@ def problem(prev_hash: str) -> dict:
     target = TARGETS[h % len(TARGETS)]
     start = WINDOW_START_MIN + (h >> 8) % WINDOW_START_SPREAD
     flyby_bodies = [1, 2, 3] + [p for p in (4, 5) if p < target]
+    kind = MISSION_DRAW[int.from_bytes(hashlib.sha256(bytes.fromhex(prev_hash) + b"type").digest(), "big")
+                        % len(MISSION_DRAW)]
+    mt = MISSION_TYPES[kind]
     return {
+        "type": kind,
+        "time_penalty_mps_per_year": mt["time_penalty_mps_per_year"],
         "target": target,
         "window_start": start,
         "window_end": start + WINDOW_DAYS,
-        "max_tof_days": int(MAX_TOF_YEARS[target] * 365.25),
+        "max_tof_days": int(MAX_TOF_YEARS[target] * 365.25 * mt["tof_share"]),
         "flyby_bodies": flyby_bodies,
         "max_flybys": MAX_FLYBYS,
     }
@@ -304,7 +329,46 @@ def baseline(prev_hash: str) -> dict:
             tof = round(h * (0.4 + 1.6 * j / 31))
             if tof > prob["max_tof_days"]:
                 continue
-            ev = evaluate([EARTH, t], [launch, launch + tof])
+            ev = evaluate([EARTH, t], [launch, launch + tof], prob["time_penalty_mps_per_year"])
             if ev and (best is None or ev["cost"] < best[0]):
                 best = (ev["cost"], [EARTH, t], [launch, launch + tof])
     return {"cost": best[0], "seq": best[1], "days": best[2]}
+
+
+# ---- drawing helpers (display only, not consensus) ----------------------
+
+def sample_path(seq, days, per_leg=40):
+    """Points (AU) along a trajectory: each leg's Lambert arc integrated with RK4."""
+    def deriv(st):
+        r = math.sqrt(st[0] ** 2 + st[1] ** 2 + st[2] ** 2)
+        k = -MU_SUN / r ** 3
+        return [st[3], st[4], st[5], k * st[0], k * st[1], k * st[2]]
+
+    def rk4(st, h):
+        k1 = deriv(st)
+        k2 = deriv([a + h / 2 * b for a, b in zip(st, k1)])
+        k3 = deriv([a + h / 2 * b for a, b in zip(st, k2)])
+        k4 = deriv([a + h * b for a, b in zip(st, k3)])
+        return [a + h / 6 * (b + 2 * c + 2 * d + e) for a, b, c, d, e in zip(st, k1, k2, k3, k4)]
+
+    out = []
+    for i in range(len(seq) - 1):
+        r1, r2 = planet_state(seq[i], days[i])[0], planet_state(seq[i + 1], days[i + 1])[0]
+        tof = days[i + 1] - days[i]
+        sol = lambert(r1, r2, tof)
+        if sol is None:
+            continue
+        st = list(r1) + list(sol[0])
+        h = tof / (per_leg * 10)
+        out.append(st[:3])
+        for _ in range(per_leg):
+            for _ in range(10):
+                st = rk4(st, h)
+            out.append(st[:3])
+    return out
+
+
+def orbit_points(pid, day, n=96):
+    """One full orbit of a planet (AU), sampled around `day`."""
+    period = 365.25 * PLANETS[pid][4][0] ** 1.5
+    return [list(planet_state(pid, day + period * k / n)[0]) for k in range(n + 1)]

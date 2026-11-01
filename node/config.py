@@ -48,10 +48,14 @@ ROUTE_BONUS_EXPONENT = 12
 PROBE_SPEED_MLY_PER_YEAR = 100      # top cruise speed (10% of light speed)
 PROBE_ACCEL_MLY_PER_YEAR2 = 10      # 0 to 10% of c in 10 years (about 0.03 g)
 SURVEY_STOPS = 4                    # stars per block where the probe must stop
-SURVEY_YEARS = 5                    # time spent surveying each stop
+SURVEY_YEARS = 5                    # time spent surveying each stop...
+SURVEY_YEARS_PER_PLANET = 2         # ...plus this much per known planet in the system
+# Survey stops favour stars with known planets: each star's chance of being a
+# stop is proportional to 1 + STOP_WEIGHT_PER_PLANET x its planet count.
+STOP_WEIGHT_PER_PLANET = 3
 DV_BUDGET_PCT_C = 50                # fuel: total delta-v of 50% of light speed
 EXHAUST_PCT_C = 10                  # exhaust speed (advanced fusion), for the mass-ratio display
 LAUNCH_YEAR = 2100
 
 GENESIS_TIMESTAMP = 1_790_812_800  # 2026-10-01 00:00 UTC
-GENESIS_MESSAGE = "Pulsarite genesis v4 - fuel budgets, cruise speeds and survey time"
+GENESIS_MESSAGE = "Pulsarite genesis v5 - surveys of planetary systems"

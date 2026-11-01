@@ -25,7 +25,7 @@ def sequences(prob, max_flybys=2):
 def _cost(prob, seq, days):
     if T.check(prob, seq, days):
         return float("inf")
-    ev = T.evaluate(seq, days)
+    ev = T.evaluate(seq, days, prob.get("time_penalty_mps_per_year", T.TIME_PENALTY_MPS_PER_YEAR))
     return ev["cost"] if ev else float("inf")
 
 

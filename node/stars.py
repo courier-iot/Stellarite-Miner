@@ -78,6 +78,17 @@ _BUILTIN = [
     ("Aldebaran", 4.599, 16.51, 65.30, 0.06, -0.19, 54.0),
 ]
 
+# Confirmed planets per system (Wikipedia, "List of nearest exoplanets", checked
+# November 2026, plus TRAPPIST-1 and Pollux beyond that list's range). Candidates,
+# disputed and refuted planets don't count. Systems not listed have none known.
+PLANETS = {
+    "Proxima Centauri": 2, "Barnard's Star": 4, "Lalande 21185": 2, "Epsilon Eridani": 1,
+    "Lacaille 9352": 4, "Ross 128": 1, "Struve 2398": 2, "Groombridge 34": 2, "Epsilon Indi": 1,
+    "GJ 1061": 3, "YZ Ceti": 3, "Luyten's Star": 2, "Teegarden's Star": 3, "Wolf 1061": 3,
+    "Gliese 687": 2, "Gliese 674": 1, "Gliese 876": 4, "Gliese 832": 1, "82 Eridani": 3,
+    "Gliese 581": 3, "Gliese 667 C": 2, "Pollux": 1, "TRAPPIST-1": 7,
+}
+
 STARS_PER_PROBLEM = 24
 SOL = (0, 0, 0)
 KMS_TO_LY_PER_YR = 1 / 299792.458
@@ -113,6 +124,7 @@ def _load():
         s["id"] = i
         for k in ("vx", "vy", "vz"):
             s.setdefault(k, 0)
+        s.setdefault("planets", PLANETS.get(s.get("name"), 0))
     return stars, source
 
 
@@ -122,7 +134,7 @@ if len(CATALOG) < STARS_PER_PROBLEM:
 
 # Fingerprint so nodes can tell they're using the same catalog.
 CATALOG_ID = hashlib.sha256(json.dumps(
-    [[s["x"], s["y"], s["z"], s["vx"], s["vy"], s["vz"]] for s in CATALOG]).encode()).hexdigest()[:16]
+    [[s["x"], s["y"], s["z"], s["vx"], s["vy"], s["vz"], s["planets"]] for s in CATALOG]).encode()).hexdigest()[:16]
 
 SPEED = C.PROBE_SPEED_MLY_PER_YEAR                 # mly per year
 LAUNCH_T = (C.LAUNCH_YEAR - 2000) * 1000          # milli-years after J2000
@@ -134,7 +146,13 @@ A = C.PROBE_ACCEL_MLY_PER_YEAR2 * 1000            # acceleration, uly/yr^2
 PCT = V // 10                                     # 1% of light speed, uly/yr
 MAX_PCT = 10                                      # cruise speeds are 1..MAX_PCT % of c
 SURVEY_STOPS = C.SURVEY_STOPS
-SURVEY_T = C.SURVEY_YEARS * 1000                  # milli-years at each stop
+SURVEY_T = C.SURVEY_YEARS * 1000                  # milli-years at each stop, plus...
+SURVEY_T_PER_PLANET = C.SURVEY_YEARS_PER_PLANET * 1000   # ...this per known planet
+
+
+def survey_t(star_id) -> int:
+    """Milli-years the probe spends surveying a stop: longer for systems with known planets."""
+    return SURVEY_T + SURVEY_T_PER_PLANET * CATALOG[star_id]["planets"]
 DV_BUDGET = C.DV_BUDGET_PCT_C * PCT               # uly/yr of total speed change
 
 
@@ -214,14 +232,20 @@ def problem(prev_hash: str) -> list:
 
 
 def stops(prev_hash: str) -> list:
-    """The block's survey stars: SURVEY_STOPS of its problem stars where the probe must come to rest."""
+    """The block's survey stars: SURVEY_STOPS of its problem stars where the probe must come to rest.
+    Stars with known planets are likelier picks (weight 1 + STOP_WEIGHT_PER_PLANET x planets)."""
     pool = problem(prev_hash)
     chosen = []
     seed = bytes.fromhex(prev_hash)
     i = 0
     while len(chosen) < SURVEY_STOPS:
-        r = int.from_bytes(hashlib.sha256(seed + b"stops" + i.to_bytes(4, "big")).digest(), "big")
-        chosen.append(pool.pop(r % len(pool)))
+        weights = [1 + C.STOP_WEIGHT_PER_PLANET * CATALOG[s]["planets"] for s in pool]
+        r = int.from_bytes(hashlib.sha256(seed + b"stops" + i.to_bytes(4, "big")).digest(), "big") % sum(weights)
+        k = 0
+        while r >= weights[k]:
+            r -= weights[k]
+            k += 1
+        chosen.append(pool.pop(k))
         i += 1
     return sorted(chosen)
 
@@ -241,7 +265,7 @@ def route_legs(plan, stop_ids=()):
     for sid, pct in plan:
         stop = sid in stop_set
         arrive, here, u, dv = intercept(here, t, sid, u, pct * PCT, stop)
-        t = arrive + SURVEY_T if stop else arrive
+        t = arrive + survey_t(sid) if stop else arrive
         if stop:
             here = pos(sid, t)                                  # it rides along with the star while surveying
         legs.append((sid, arrive, here, u, dv, t))
@@ -281,7 +305,7 @@ def _greedy(stars, stop_set, c):
         left.remove(best)
         t, here, u, _ = intercept(here, t, best, u, c, best in stop_set)
         if best in stop_set:
-            t += SURVEY_T
+            t += survey_t(best)
             here = pos(best, t)
         route.append(best)
     return route

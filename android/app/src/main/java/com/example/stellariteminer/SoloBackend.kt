@@ -70,7 +70,7 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
         val value = u.value(t.prev, seq, days)
         val ev = m.evaluate(seq, days)!!
         val gain = Math.round(10000.0 * (1 - value.getLong("cost").toDouble() / value.getLong("baseline"))) / 100.0
-        return value to TrajectoryInfo(seq.toList(), days.toList(), m.pathName(seq), ev.dvKms, ev.years, gain)
+        return value to TrajectoryInfo(seq.toList(), days.toList(), m.pathName(seq), ev.dvKms, ev.years, gain, m.missionType)
     }
 
     override fun submit(job: Job, nonce: Long): SubmitResult {
@@ -145,6 +145,8 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
                 out.put(JSONObject().put("height", b.getLong("height"))
                     .put("path", JSONArray(seq.map { m.planets[it].name })).put("seq", JSONArray(seq.toList()))
                     .put("days", JSONArray(days.toList())).put("dv_kms", ev.dvKms).put("years", ev.years)
+                    .put("mission_type", m.missionType)
+                    .put("launch_date", TrajectoryModel.dateOf(days.first())).put("arrival_date", TrajectoryModel.dateOf(days.last()))
                     .put("improvement_pct", Math.round(10000.0 * (1 - tr.getLong("cost").toDouble() / tr.getLong("baseline"))) / 100.0))
             }
             return out

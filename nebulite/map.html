@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Network Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #030303; --panel: #0A0A0A; --line: #2a0a12; --crimson: #DC143C; --crimson-light: #FF4D6A;
+    --amber: #FBBF24; --text: #F2F2F2; --muted: #9A9A9A;
+    --mono: "Share Tech Mono", ui-monospace, Menlo, Consolas, monospace;
+    --display: "Orbitron", var(--mono);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: var(--mono); }
+  body { display: grid; grid-template-rows: auto 1fr; min-height: 100vh; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; padding: 14px 16px 10px;
+           border-bottom: 1px solid var(--line); }
+  h1 { margin: 0; font: 700 18px/1.2 var(--display); letter-spacing: .18em; color: var(--crimson-light);
+       text-shadow: 0 0 12px rgba(220, 20, 60, .6); }
+  .sub { color: var(--muted); font-size: 13px; letter-spacing: .06em; }
+  .sub b { color: var(--amber); font-weight: normal; }
+  main { display: grid; grid-template-columns: 1fr 320px; min-height: 0; }
+  #stage { position: relative; min-height: 60vh; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+  #hint { position: absolute; left: 12px; bottom: 10px; font-size: 11px; color: var(--muted); letter-spacing: .08em;
+          pointer-events: none; }
+  aside { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 14px 14px 20px; }
+  aside h2 { font: 500 11px var(--display); letter-spacing: .2em; color: var(--muted); margin: 14px 0 8px; }
+  aside h2:first-child { margin-top: 0; }
+  #info { min-height: 72px; font-size: 13px; line-height: 1.5; white-space: pre-line; color: var(--text);
+          border: 1px solid var(--line); padding: 10px; background: #050505; }
+  #info .k { color: var(--amber); }
+  .row { display: block; width: 100%; text-align: left; background: none; border: 1px solid transparent; color: var(--text);
+         font: 13px/1.45 var(--mono); padding: 7px 8px; cursor: pointer; }
+  .row:hover { border-color: var(--line); }
+  .row.on { border-color: var(--crimson); background: rgba(220, 20, 60, .08); }
+  .row .t { color: var(--crimson-light); }
+  .row .m { color: var(--muted); font-size: 12px; }
+  .empty { color: var(--muted); font-size: 13px; }
+  #status { font-size: 11px; color: var(--muted); margin-top: 14px; }
+  @media (max-width: 760px) {
+    main { grid-template-columns: 1fr; grid-template-rows: 62vh auto; }
+    aside { border-left: 0; border-top: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">NETWORK MAP</h1>
+  <span class="sub" id="sub">connecting…</span>
+</header>
+<main>
+  <div id="stage"><canvas id="c"></canvas><div id="hint">DRAG TO ROTATE · PINCH OR SCROLL TO ZOOM · TAP FOR DETAILS<span id="key"></span></div></div>
+  <aside>
+    <h2>DETAILS</h2>
+    <div id="info">Tap a star, planet or route.</div>
+    <h2 id="listTitle">RECENT BLOCKS</h2>
+    <div id="list"></div>
+    <div id="status"></div>
+  </aside>
+</main>
+<script>
+"use strict";
+const css = getComputedStyle(document.documentElement);
+const COL = { crimson: "#DC143C", crimsonLight: "#FF4D6A", amber: "#FBBF24", text: "#F2F2F2", muted: "#9A9A9A" };
+const canvas = document.getElementById("c"), ctx = canvas.getContext("2d");
+const info = document.getElementById("info"), list = document.getElementById("list");
+let data = null, kind = "", selected = 0, picks = [];
+let yaw = 0.6, pitch = 0.5, zoom = 1;
+
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
+function fmt(n, d = 0) { return Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }); }
+
+// Distances are compressed (r -> sqrt r) so near and far objects both fit: nearby stars and
+// Mercury stay readable next to Arcturus and Neptune. Directions are true.
+function squash(p) { const r = Math.hypot(p[0], p[1], p[2]); if (r < 1e-9) return [0, 0, 0]; const f = Math.sqrt(r) / r; return [p[0] * f, p[1] * f, p[2] * f]; }
+function world(p) { return squash(p); }
+function extent() { return kind === "orbits" ? Math.sqrt(31) : Math.sqrt(45); }
+
+function project(p) {
+  const w = canvas.width, h = canvas.height, s = Math.min(w, h) / (2.3 * extent()) * zoom;
+  const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+  const x1 = p[0] * cy - p[1] * sy, y1 = p[0] * sy + p[1] * cy;
+  const y2 = y1 * cp - p[2] * sp, z2 = y1 * sp + p[2] * cp;
+  const persp = 1 / (1 + y2 / (extent() * 4));
+  return [w / 2 + x1 * s * persp, h / 2 - z2 * s * persp, persp];
+}
+
+function resize() {
+  const r = canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, r.width * dpr); canvas.height = Math.max(1, r.height * dpr);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  draw();
+}
+
+function polyline(pts, color, width, alpha) {
+  if (pts.length < 2) return;
+  ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = width * (window.devicePixelRatio || 1);
+  ctx.beginPath();
+  pts.forEach((p, i) => { const q = project(world(p)); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); });
+  ctx.stroke(); ctx.globalAlpha = 1;
+}
+
+function dot(p, color, r, label, glow, details) {
+  const q = project(world(p)), dpr = window.devicePixelRatio || 1;
+  if (glow) { ctx.shadowColor = color; ctx.shadowBlur = 10 * dpr; }
+  ctx.fillStyle = color; ctx.beginPath(); ctx.arc(q[0], q[1], r * dpr * Math.max(.6, q[2]), 0, 7); ctx.fill();
+  ctx.shadowBlur = 0;
+  if (label) { ctx.fillStyle = color; ctx.font = `${11 * dpr}px ${css.getPropertyValue("--mono")}`; ctx.fillText(label, q[0] + 6 * dpr, q[1] - 6 * dpr); }
+  if (details) picks.push({ x: q[0], y: q[1], details });
+}
+
+function rings() {
+  const step = kind === "orbits" ? null : [10, 20, 30, 40];
+  if (!step) return;
+  step.forEach(r => {
+    const pts = []; for (let k = 0; k <= 72; k++) { const a = k / 72 * 2 * Math.PI; pts.push([r * Math.cos(a), r * Math.sin(a), 0]); }   // squashed on drawing
+    polyline(pts, COL.muted, 1, .18);
+    dot([r, 0, 0], COL.muted, 0.01, r + " LY", false);
+  });
+}
+
+function draw() {
+  ctx.fillStyle = "#030303"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  picks = [];
+  if (!data) return;
+  rings();
+  if (kind === "stars") drawStars(); else drawOrbits();
+}
+
+function drawStars() {
+  const rs = data.routes, sel = rs[selected];
+  rs.forEach((r, i) => { if (i !== selected) polyline(r.points, COL.crimson, 1, .35); });
+  if (sel) polyline(sel.points, COL.amber, 2.2, 1);
+  const onRoute = new Map(); if (sel) sel.route_ids.forEach((id, k) => onRoute.set(id, k));
+  const stops = new Set(sel ? sel.stop_ids : []);
+  dot([0, 0, 0], COL.amber, 4.5, "SOL", true, `<span class="k">SOL</span>\nThe probe launches from here in ${data.launch_year}.`);
+  data.stars.forEach(s => {
+    const k = onRoute.get(s.id), stop = stops.has(s.id);
+    const p = sel && k !== undefined ? sel.points[k + 1] : s.p;
+    const color = stop ? COL.amber : k !== undefined ? COL.crimsonLight : COL.text;
+    const ends = sel && (k === 0 || k === sel.route_ids.length - 1);
+    const label = stop || ends ? (stop ? "◆ " : "") + s.name.toUpperCase() + (s.planets ? " ●" + s.planets : "") : "";
+    let d = `<span class="k">${esc(s.name.toUpperCase())}</span>\n${fmt(Math.hypot(...s.p), 2)} ly from the Sun in ${data.launch_year}`;
+    d += s.planets ? `\nKnown planets: ${s.planets}` : "\nNo planets known yet";
+    if (sel && k !== undefined) {
+      d += `\nBlock ${sel.height}: star ${k + 1} of ${sel.route_ids.length}, reached in ${fmt(sel.arrive_years[k])}`;
+      d += `\nLeg cruise speed: ${sel.speeds_pct_c[k]}% of light speed`;
+      if (stop) d += "\nSURVEY STOP: the probe brakes to rest and surveys the system";
+    }
+    dot(p, color, k !== undefined ? 3.2 : 1.8, label, k !== undefined, d);
+  });
+}
+
+function drawOrbits() {
+  data.orbits.forEach(o => polyline(o.points, COL.muted, 1, .45));
+  const ms = data.missions, sel = ms[selected];
+  ms.forEach((m, i) => { if (i !== selected) polyline(m.points, COL.crimson, 1, .35); });
+  if (sel) polyline(sel.points, COL.amber, 2.2, 1);
+  dot([0, 0, 0], COL.amber, 5, "SUN", true, `<span class="k">SUN</span>\nDistances are compressed (square root) so every orbit fits; directions are true.`);
+  data.orbits.forEach(o => {
+    const p = o.points[0];
+    dot(p, COL.text, 2.4, o.name.toUpperCase(), false,
+      `<span class="k">${esc(o.name.toUpperCase())}</span>\n${fmt(Math.hypot(...p), 2)} AU from the Sun at the latest mission's launch`);
+  });
+  if (sel) sel.encounters.forEach((e, k) => {
+    const what = k === 0 ? "LAUNCH" : k === sel.encounters.length - 1 ? "ARRIVE" : "FLYBY";
+    dot(e.p, COL.amber, 3, `${what} ${e.planet.toUpperCase()} ${e.date.slice(0, 4)}`, true,
+      `<span class="k">${what}: ${esc(e.planet.toUpperCase())}</span>\n${e.date}\nBlock ${sel.height} · ${sel.mission_type} mission`);
+  });
+}
+
+function renderList() {
+  const rows = kind === "stars" ? data.routes : data.missions;
+  document.getElementById("listTitle").textContent = kind === "stars" ? "RECENT ROUTES" : "RECENT MISSIONS";
+  if (!rows.length) { list.innerHTML = `<div class="empty">No blocks mined yet. Start a miner and this map fills in.</div>`; return; }
+  list.innerHTML = rows.map((r, i) => {
+    const by = r.miner_name ? ` · by ${esc(r.miner_name)}` : "";
+    const body = kind === "stars"
+      ? `<span class="t">BLOCK ${r.height}</span>${by}<br>${fmt(r.years)} yr · ${fmt(r.length_ly)} ly · fuel ${fmt(r.fuel_used_pct)}%<br>` +
+        `<span class="m">${fmt(r.improvement_pct, 1)}% faster than greedy · stops: ${esc(r.stops.join(", "))}</span>`
+      : `<span class="t">BLOCK ${r.height}</span> · ${esc(r.mission_type)}${by}<br>${esc(r.path.join("–"))}<br>` +
+        `<span class="m">${fmt(r.dv_kms, 2)} km/s · ${fmt(r.years, 1)} yr · arrives ${r.arrival_date} · ${fmt(r.improvement_pct, 1)}% cheaper than direct</span>`;
+    return `<button class="row${i === selected ? " on" : ""}" data-i="${i}">${body}</button>`;
+  }).join("");
+  list.querySelectorAll(".row").forEach(b => b.onclick = () => { selected = +b.dataset.i; renderList(); showSelected(); draw(); });
+}
+
+function showSelected() {
+  const r = (kind === "stars" ? data.routes : data.missions)[selected];
+  if (!r) return;
+  info.innerHTML = kind === "stars"
+    ? `<span class="k">BLOCK ${r.height} ROUTE</span>\n${r.route.length} stars in ${fmt(r.years)} years (greedy: ${fmt(r.baseline_years)})\n` +
+      `${fmt(r.length_ly)} ly flown · fuel ${fmt(r.fuel_used_pct)}% · mass ratio ${fmt(r.mass_ratio, 1)}\nSurvey stops: ${esc(r.stops.join(", "))}`
+    : `<span class="k">BLOCK ${r.height} · ${esc(r.mission_type.toUpperCase())} MISSION</span>\n${esc(r.path.join(" → "))}\n` +
+      `Launch ${r.launch_date} · arrive ${r.arrival_date}\n${fmt(r.dv_kms, 2)} km/s over ${fmt(r.years, 1)} years`;
+}
+
+async function load() {
+  try {
+    const res = await fetch("map/data", { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const d = await res.json();
+    const first = !data;
+    data = d; kind = d.stars ? "stars" : "orbits";
+    document.title = `${d.coin} Map`;
+    document.getElementById("title").textContent = `${d.coin.toUpperCase()} // MAP`;
+    document.getElementById("key").textContent = kind === "stars"
+      ? " · ◆ SURVEY STOP · ● KNOWN PLANETS · DISTANCES COMPRESSED"
+      : " · DISTANCES COMPRESSED";
+    document.getElementById("sub").innerHTML = kind === "stars"
+      ? `star routes · <b>${d.stars.length}</b> moving stars · height <b>${d.height}</b>`
+      : `mission plans · real planet orbits · height <b>${d.height}</b>`;
+    const n = (kind === "stars" ? d.routes : d.missions).length;
+    if (selected >= n) selected = 0;
+    renderList(); if (first) showSelected(); draw();
+    document.getElementById("status").textContent = "Updated " + new Date().toLocaleTimeString() + " · refreshes every 30 s";
+  } catch (e) {
+    document.getElementById("status").textContent = "Couldn't reach the node (" + e.message + "). Retrying…";
+  }
+}
+
+// interaction: drag to rotate, wheel/pinch to zoom, tap to pick
+let drag = null, pinch = null, moved = false;
+const pointers = new Map();
+canvas.addEventListener("pointerdown", e => { canvas.setPointerCapture(e.pointerId); pointers.set(e.pointerId, [e.clientX, e.clientY]); moved = false;
+  if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), z: zoom }; }
+  drag = [e.clientX, e.clientY, yaw, pitch]; });
+canvas.addEventListener("pointermove", e => {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, [e.clientX, e.clientY]);
+  if (pointers.size === 2 && pinch) { const [a, b] = [...pointers.values()]; zoom = Math.min(8, Math.max(.4, pinch.z * Math.hypot(a[0] - b[0], a[1] - b[1]) / pinch.d)); moved = true; draw(); return; }
+  if (!drag) return;
+  const dx = e.clientX - drag[0], dy = e.clientY - drag[1];
+  if (Math.abs(dx) + Math.abs(dy) > 4) moved = true;
+  yaw = drag[2] + dx * .008; pitch = Math.max(-1.5, Math.min(1.5, drag[3] + dy * .008)); draw();
+});
+function up(e) {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinch = null;
+  if (!moved && drag && pointers.size === 0) pick(e);
+  if (pointers.size === 0) drag = null;
+}
+canvas.addEventListener("pointerup", up); canvas.addEventListener("pointercancel", up);
+canvas.addEventListener("wheel", e => { e.preventDefault(); zoom = Math.min(8, Math.max(.4, zoom * Math.exp(-e.deltaY * .0015))); draw(); }, { passive: false });
+function pick(e) {
+  const r = canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  const x = (e.clientX - r.left) * dpr, y = (e.clientY - r.top) * dpr;
+  let best = null, bd = 24 * dpr;
+  picks.forEach(p => { const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = p; } });
+  if (best) info.innerHTML = best.details; else showSelected();
+}
+
+window.addEventListener("resize", resize);
+resize(); load(); setInterval(load, 30000);
+</script>
+</body>
+</html>

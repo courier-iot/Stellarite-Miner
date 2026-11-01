@@ -42,4 +42,4 @@ TRAJECTORY_BONUS_EXPONENT = 12
 COST_TOLERANCE_MPS = 1
 
 GENESIS_TIMESTAMP = 1_790_812_800  # 2026-10-01 00:00 UTC
-GENESIS_MESSAGE = "Nebulite genesis - planning paths between the planets"
+GENESIS_MESSAGE = "Nebulite genesis v2 - science, cargo and crewed missions"

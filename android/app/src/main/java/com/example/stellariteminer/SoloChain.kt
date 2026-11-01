@@ -220,9 +220,13 @@ class StarRouteRules : UsefulRules {
         val seed = bytesOfHex(prevHash)
         var i = 0
         while (chosen.size < SoloData.SURVEY_STOPS) {
+            // planet hosts are likelier stops: weight 1 + STOP_WEIGHT_PER_PLANET x planets (as stars.stops)
+            val weights = pool.map { 1L + SoloData.STOP_WEIGHT_PER_PLANET * SoloData.STAR_PLANETS[it] }
             val d = sha256(seed + "stops".toByteArray() + byteArrayOf((i ushr 24).toByte(), (i ushr 16).toByte(), (i ushr 8).toByte(), i.toByte()))
-            val r = BigInteger(1, d).mod(BigInteger.valueOf(pool.size.toLong())).toInt()
-            chosen += pool.removeAt(r)
+            var r = BigInteger(1, d).mod(BigInteger.valueOf(weights.sum())).toLong()
+            var k = 0
+            while (r >= weights[k]) { r -= weights[k]; k++ }
+            chosen += pool.removeAt(k)
             i++
         }
         return chosen.sorted()
@@ -306,9 +310,15 @@ class TrajectoryRules : UsefulRules {
         val flyby = JSONArray().put(1).put(2).put(3)
         for (p in intArrayOf(4, 5)) if (p < target) flyby.put(p)
         val years = rulesJson.getJSONObject("max_tof_years").getInt(target.toString())
-        return JSONObject().put("target", target).put("window_start", start)
+        val draw = rulesJson.getJSONArray("mission_draw")
+        val th = BigInteger(1, sha256(bytesOfHex(prevHash) + "type".toByteArray()))
+        val kind = draw.getString(th.mod(BigInteger.valueOf(draw.length().toLong())).toInt())
+        val mt = rulesJson.getJSONObject("mission_types").getJSONObject(kind)
+        return JSONObject().put("type", kind)
+            .put("time_penalty_mps_per_year", mt.getInt("time_penalty_mps_per_year"))
+            .put("target", target).put("window_start", start)
             .put("window_end", start + rulesJson.getInt("window_days"))
-            .put("max_tof_days", (years * 365.25).toInt()).put("flyby_bodies", flyby)
+            .put("max_tof_days", (years * 365.25 * mt.getDouble("tof_share")).toInt()).put("flyby_bodies", flyby)
             .put("max_flybys", rulesJson.getInt("max_flybys"))
     }
 

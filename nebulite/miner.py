@@ -62,8 +62,8 @@ def main():
             print("Trajectory refused:", scored.get("error"))
             continue
         path = "-".join(T.PLANETS[p][1] for p in seq)
-        desc = (f"{path}: {scored['dv_kms']:.2f} km/s, {scored['years']:.1f} yr "
-                f"({scored['improvement_pct']:+.1f}% vs direct)")
+        desc = (f"{work['mission']['type']} mission {path}: {scored['dv_kms']:.2f} km/s, {scored['years']:.1f} yr, "
+                f"arriving {scored['arrival_date']} ({scored['improvement_pct']:+.1f}% vs direct)")
         prefix, target = bytes.fromhex(scored["prefix"]), int(scored["target"], 16)
         t0 = time.time()
         nonce, tried = search(prefix, target, int.from_bytes(os.urandom(8), "big") >> 2,
