@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.stellariteminer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 120000
-        versionName = "12.0.0"
+        versionCode = 120100
+        versionName = "12.1.0"
     }
 
     buildTypes {
@@ -32,4 +32,8 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+}
+
+dependencies {
+    implementation(project(":core"))   // consensus, physics, mining engine and wallet code
 }

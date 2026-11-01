@@ -94,7 +94,7 @@ def info():
             "total_work": str(chain.total_work()),
             "mempool": len(chain.mempool), "peers": sorted(peers),
             "target_block_seconds": C.TARGET_BLOCK_SECONDS,
-            "units_per_coin": C.UNITS_PER_COIN,
+            "units_per_coin": C.UNITS_PER_COIN, "min_fee": C.MIN_FEE,
             "name_pow_bits": C.NAME_POW_BITS,
             "catalog_id": stars.CATALOG_ID,
             "stars_per_block": stars.STARS_PER_PROBLEM,

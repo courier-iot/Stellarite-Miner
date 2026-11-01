@@ -193,7 +193,7 @@ Nodes forward new blocks and transactions to each other and re-sync every 30 sec
 ## Make it your own
 
 1. **Name and economics:** edit `node/config.py` (`COIN_NAME`, `TICKER`, `ADDRESS_PREFIX`, reward, block time, genesis message).
-2. **App:** match those in `android/app/src/main/java/com/example/stellariteminer/Coin.kt` and rename the app in `res/values/strings.xml`. To change the package name, update `namespace` and `applicationId` in `android/app/build.gradle.kts` and move the source folder.
+2. **App:** match those in `android/core/src/main/java/com/example/stellariteminer/Coin.kt` and rename the app in `res/values/strings.xml`. To change the package name, update `namespace` and `applicationId` in `android/app/build.gradle.kts` and move the source folder.
 3. **Start fresh:** changing `config.py` changes the genesis block, so delete `node/data/` on every node.
 4. **Sign releases properly:** CI signs the APK with Android's debug key so it installs out of the box. Before sharing it widely, create your own keystore and set it as the release `signingConfig`.
 
@@ -326,6 +326,12 @@ Pulsarite's probe assumes a future drive, reaching 10% of light speed, while Neb
 Every Nebulite node reports `star_catalog_id` in `/info`. It should equal the Pulsarite node's `catalog_id`, which confirms both coins use the same stars. `nebulite/star_targets.json` is generated from Pulsarite's catalog by `tools/gen_solo_data.py`.
 
 **Limits today.** Paths are patched conics: the planets' gravity is ignored between encounters, and flybys are treated as instantaneous. That is now the largest source of error, far above the planet positions. There are also no deep-space engine burns or multi-loop transfers, and arrival is scored as arrival speed rather than orbit insertion. ROADMAP.md covers each of these.
+
+## Using the coins in the Stellura wallet
+
+[Stellura](https://github.com/courier-iot/Stellura-Crypto-Wallet) holds, sends and mines Pulsarite and Nebulite next to its other test coins. It derives one key for both coins from its recovery phrase (path `m/44'/7827'/0'/0/0`), shows both addresses, sends to addresses or `@names`, claims usernames, and mines solo or with your node, using the same engine as this app.
+
+The engine lives in `android/core`. After each release, run `tools/sync-stellarite-core.sh <path to this repo>` in the Stellura repo and commit, so the wallet follows the same consensus rules. Stellura only connects over HTTPS, so point it at a cloud node set up with [DEPLOY.md](DEPLOY.md).
 
 ## The MAP tab
 

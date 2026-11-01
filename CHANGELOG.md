@@ -6,7 +6,14 @@ Release numbers are **MAJOR.MEDIUM.MINOR**, and every feature is tagged by size:
 - **[MEDIUM]** a notable addition or improvement to something that already exists
 - **[MINOR]** a small tweak, a fix or polish
 
-A release bumps the number for the biggest change in it and resets the ones after it: a major feature takes 5.4.3 to 6.0.0, a medium one to 5.5.0, and minor-only changes to 5.4.4. The app's `versionName` in `android/app/build.gradle.kts` matches the latest release here, and `versionCode` is MAJOR×10000 + MEDIUM×100 + MINOR (12.0.0 → 120000). Tag a release (e.g. `v7.0.0`) on GitHub and the workflow attaches the APK.
+A release bumps the number for the biggest change in it and resets the ones after it: a major feature takes 5.4.3 to 6.0.0, a medium one to 5.5.0, and minor-only changes to 5.4.4. The app's `versionName` in `android/app/build.gradle.kts` matches the latest release here, and `versionCode` is MAJOR×10000 + MEDIUM×100 + MINOR (12.1.0 → 120100). Tag a release (e.g. `v7.0.0`) on GitHub and the workflow attaches the APK.
+
+## 12.1.0: A shared core for the miner and the Stellura wallet
+
+- **[MEDIUM]** The app's engine is now its own module, `android/core`: consensus rules, physics, the mining engine, node and pool clients, and signing. The miner app uses it, and the Stellura wallet keeps a synced copy (`tools/sync-stellarite-core.sh` in that repo), so both apps mine and sign with identical code.
+- **[MINOR]** `KeySigner`: signs payments and name claims from a key held elsewhere (the wallet derives it from its recovery phrase), with no storage of its own. The app's `Wallet` uses it too.
+- **[MINOR]** Both nodes' `/info` report `min_fee`. `SoloBackend.delete` removes a solo chain (used when a wallet is erased).
+- **[MINOR]** `tools/gen_solo_data.py` and the CI check now write to `android/core`.
 
 ## 12.0.0: Heliopause runs, interstellar-object intercepts and powered flybys
 

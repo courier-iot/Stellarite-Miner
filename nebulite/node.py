@@ -93,7 +93,7 @@ def info():
             "total_work": str(chain.total_work()),
             "mempool": len(chain.mempool), "peers": sorted(peers),
             "target_block_seconds": C.TARGET_BLOCK_SECONDS,
-            "units_per_coin": C.UNITS_PER_COIN,
+            "units_per_coin": C.UNITS_PER_COIN, "min_fee": C.MIN_FEE,
             "name_pow_bits": C.NAME_POW_BITS,
             "useful_work": "spacecraft trajectories",
             "ephemeris": T.EPHEMERIS, "ephemeris_id": T.EPHEMERIS_ID,

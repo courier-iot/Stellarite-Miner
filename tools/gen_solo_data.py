@@ -6,7 +6,7 @@ node/config.py, node/stars.py, nebulite/config.py or nebulite/trajectory.py:
 
   python tools/gen_solo_data.py
 
-It rewrites android/app/src/main/java/com/example/stellariteminer/SoloData.kt.
+It rewrites android/core/src/main/java/com/example/stellariteminer/SoloData.kt.
 """
 import importlib
 import json
@@ -16,7 +16,7 @@ import shutil
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = os.path.join(ROOT, "android/app/src/main/java/com/example/stellariteminer/SoloData.kt")
+OUT = os.path.join(ROOT, "android/core/src/main/java/com/example/stellariteminer/SoloData.kt")
 
 
 def load(folder, *mods):
@@ -166,7 +166,7 @@ object SoloData {{
         f.write(src)
     print("wrote", os.path.relpath(OUT, ROOT))
     # The app reads the same planetary theory the node uses (Vsop87.kt loads it as a resource).
-    res = os.path.join(ROOT, "android/app/src/main/resources/vsop87a.txt")
+    res = os.path.join(ROOT, "android/core/src/main/resources/vsop87a.txt")
     os.makedirs(os.path.dirname(res), exist_ok=True)
     shutil.copyfile(T.VSOP87_FILE, res)
     print("wrote", os.path.relpath(res, ROOT))

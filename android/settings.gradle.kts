@@ -14,3 +14,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "StellariteMiner"
 include(":app")
+include(":core")
