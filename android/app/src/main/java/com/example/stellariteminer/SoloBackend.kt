@@ -10,7 +10,9 @@ import java.io.File
  * Uses the same useful-work optimisers as node mining and the same block rules,
  * so the chain can later be pushed to a computer or cloud node.
  */
-class SoloBackend(private val chain: SoloChain, private val address: String, private val name: String = "") : PoolBackend {
+class SoloBackend(private val chain: SoloChain, private val address: String, private val name: String = "",
+                  /** Pulsarite: blocks of the phone's own Nebulite solo chain, whose escape missions can scout routes. */
+                  private val scoutSource: (() -> List<JSONObject>)? = null) : PoolBackend {
     override val unitName = "blocks"
 
     private class Extra(val template: SoloChain.Template, val value: Any)
@@ -21,9 +23,22 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
     private var trajOpt: TrajectoryOptimizer? = null
     private var trajModel: TrajectoryModel? = null
 
-    override fun getWork(): Job {
+    private var scouts: List<Scouts.Info> = emptyList()
+    private val weakScouts = HashSet<String>()     // scouts that lacked work for our route on this block
+
+    override fun getWork(): Job = try { buildWork() } catch (e: IllegalArgumentException) {
+        // a cited scout lacks work for the route we found: drop it and plan again without it
+        val m = e.message ?: ""
+        if (!m.startsWith("SCOUT_WEAK:")) throw e
+        weakScouts += m.removePrefix("SCOUT_WEAK:")
+        routePlanner = null
+        buildWork()
+    }
+
+    private fun buildWork(): Job {
         val t = chain.template(address, name)
         val fresh = t.prev != problemKey
+        if (fresh) weakScouts.clear()
         problemKey = t.prev
         val budget = if (fresh) FIRST_MS else REFINE_MS
         val (value, work) = when (val u = chain.useful) {
@@ -42,20 +57,28 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
 
     private fun routeWork(u: StarRouteRules, t: SoloChain.Template, fresh: Boolean, ms: Long): Pair<Any, UsefulWork> {
         if (fresh || routePlanner == null) {
-            val f = StarField.fromCatalog(u.problem(t.prev), u.stops(t.prev))
+            // Nebulite escapes aimed at this block's survey stars turn those stops into flybys
+            scouts = scoutSource?.let { src ->
+                try { Scouts.choose(u.stops(t.prev), src(), Scouts.usedOn(chain.blocksSnapshot()), weakScouts) }
+                catch (e: Exception) { emptyList() }
+            } ?: emptyList()
+            val scouted = scouts.map { it.star }
+            val f = StarField.fromCatalog(u.problem(t.prev), u.stops(t.prev).filter { it !in scouted })
             routeField = f
             routePlanner = MovingRoutePlanner(f)
         }
+        t.scouts = scouts
         val f = routeField!!
         val opt = routePlanner!!
         opt.improve(ms)
         val plan = StarRouteRules.Plan(opt.best.map { f.ids[it] }, opt.bestSpeeds.toList())
         val time = opt.bestTime
-        val base = opt.baselineTime
+        val base = u.baselineTime(t.prev)          // the block's baseline (all stops), as the node uses
         val dv = f.dv(opt.best, opt.bestSpeeds)
+        val scouted = scouts.map { it.star }
         return plan.toJson() to RouteInfo(plan.ids, time / 1000.0, base / 1000.0,
             Math.round(10000.0 * (1 - time.toDouble() / base)) / 100.0, f.length(opt.best, opt.bestSpeeds) / 1000.0,
-            u.stops(t.prev), plan.speeds, Math.round(1000.0 * dv / f.dvBudget) / 10.0)
+            u.stops(t.prev).filter { it !in scouted }, plan.speeds, Math.round(1000.0 * dv / f.dvBudget) / 10.0, scouted)
     }
 
     private var escOpt: EscapeOptimizer? = null
@@ -136,11 +159,13 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
             val out = JSONArray()
             for (b in chain.blocks.drop(1).takeLast(limit).reversed()) {
                 val plan = StarRouteRules.Plan.fromJson(b.getJSONArray("route"))
-                val st = u.stops(b.getString("prev_hash"))
+                val cited = b.optJSONArray("scouts")?.let { a -> (0 until a.length()).mapNotNull { Scouts.verify(a.getJSONObject(it)) } } ?: emptyList()
+                val st = u.stops(b.getString("prev_hash")).filter { s -> cited.none { it.star == s } }
                 val t = u.time(plan, st); val base = u.baselineTime(b.getString("prev_hash"))
                 val budget = SoloData.DV_BUDGET_PCT_C * SoloData.PROBE_SPEED * 100
                 out.put(JSONObject().put("height", b.getLong("height")).put("route_ids", JSONArray(plan.ids))
                     .put("speeds_pct_c", JSONArray(plan.speeds)).put("stop_ids", JSONArray(st))
+                    .put("scouted_ids", JSONArray(cited.map { it.star })).put("scouted", JSONArray(cited.map { it.starName }))
                     .put("fuel_used_pct", Math.round(1000.0 * u.dv(plan, st) / budget) / 10.0)
                     .put("years", t / 1000.0).put("baseline_years", base / 1000.0)
                     .put("length_ly", u.length(plan, st) / 1000.0)

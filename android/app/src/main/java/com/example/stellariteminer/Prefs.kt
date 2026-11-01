@@ -57,7 +57,11 @@ class Prefs(context: Context) {
         val c = coin
         return when (c.protocol) {
             Protocol.NODE -> when {
-                solo(c.id) -> SoloBackend(SoloBackend.chainFor(app, c), user(c.id), username)
+                solo(c.id) -> SoloBackend(SoloBackend.chainFor(app, c), user(c.id), username,
+                    // Pulsarite routes can be scouted by escape missions on this phone's Nebulite solo chain
+                    if (c.kind == WorkKind.STAR_ROUTES) {
+                        { SoloBackend.chainFor(app, CoinProfile.byId("nblt")).blocksSnapshot() }
+                    } else null)
                 c.kind == WorkKind.TRAJECTORIES -> NebuliteClient(url(c.id), user(c.id), username)
                 else -> NodeClient(url(c.id), user(c.id), username)
             }

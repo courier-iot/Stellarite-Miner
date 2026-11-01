@@ -301,7 +301,7 @@ Pulsarite's probe assumes a future drive, reaching 10% of light speed, while Neb
 - **The proof travels in the block.** A Pulsarite block cites a scout by including the Nebulite block itself (header, trajectory and nonce). Every Pulsarite node re-checks the escape physics and the proof of work on its own, so it never contacts the Nebulite network and neither chain can stall the other.
 - **Forging doesn't pay.** A cited Nebulite block must carry at least a third of the hashing the Pulsarite block needs. Each Nebulite block can be cited only once. Scouts can make a Pulsarite hash target at most about 1.27× easier, which saves at most 21% of the hashing. So a fake scout always costs more than it saves, while the full time saving still shows in the mission log and maps.
 - **Automatic for miners.** Start the Pulsarite node with `NEBULITE_URL` set to a Nebulite node (the Docker setup does this). It then fetches escape missions from that node's `/scouts`, checks them, and attaches the best one for each survey stop to the work it hands out. Phones and `miner.py` simply see the scouted stops as flybys. The RIG line shows `+ 1 SCOUTED`, and the maps mark scouted stars ✦.
-- **Not in solo mode yet:** scouts need a Pulsarite node and a Nebulite node.
+- **Solo mode too:** with SOLO MODE on, Pulsarite routes can cite escape missions from the phone's own Nebulite solo chain. Mine some Nebulite solo blocks first; about 1 in 5 is an escape mission. The same rules apply as on a node (proof in the block, work rule, cite once), so a solo chain with scouts is accepted when you push it, as long as you push the Nebulite chain to the matching Nebulite network as well.
 
 `python tools/make_scouts.py` mines Nebulite escape blocks for testing and demos.
 

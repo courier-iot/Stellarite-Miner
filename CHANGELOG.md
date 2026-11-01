@@ -6,7 +6,13 @@ Release numbers are **MAJOR.MEDIUM.MINOR**, and every feature is tagged by size:
 - **[MEDIUM]** a notable addition or improvement to something that already exists
 - **[MINOR]** a small tweak, a fix or polish
 
-A release bumps the number for the biggest change in it and resets the ones after it: a major feature takes 5.4.3 to 6.0.0, a medium one to 5.5.0, and minor-only changes to 5.4.4. The app's `versionName` in `android/app/build.gradle.kts` matches the latest release here, and `versionCode` is MAJOR×10000 + MEDIUM×100 + MINOR (10.0.0 → 100000). Tag a release (e.g. `v7.0.0`) on GitHub and the workflow attaches the APK.
+A release bumps the number for the biggest change in it and resets the ones after it: a major feature takes 5.4.3 to 6.0.0, a medium one to 5.5.0, and minor-only changes to 5.4.4. The app's `versionName` in `android/app/build.gradle.kts` matches the latest release here, and `versionCode` is MAJOR×10000 + MEDIUM×100 + MINOR (10.1.0 → 100100). Tag a release (e.g. `v7.0.0`) on GitHub and the workflow attaches the APK.
+
+## 10.1.0: Scouts in solo mode
+
+- **[MEDIUM]** Solo scouts: Pulsarite solo mining cites escape missions from the phone's own Nebulite solo chain, so solo routes can fly past scouted stops too. The phone applies the node's exact rules (proof in the block, header commitment, work rule, cite once, 2% scoring cap), and pushed chains are accepted by both nodes.
+- **[MINOR]** If a scout turns out to lack enough work for the route found, the phone drops it and plans again without it.
+- **[MINOR]** Solo route rows (MAP tab) mark scouted stars.
 
 ## 10.0.0: Nebulite scouts guide Pulsarite routes
 

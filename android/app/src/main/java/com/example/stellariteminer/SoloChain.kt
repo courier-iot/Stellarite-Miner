@@ -31,8 +31,9 @@ interface UsefulRules {
     val field: String                       // "route" or "trajectory"
     val genesisValue: Any                   // [] or null
     fun headerText(value: Any): String      // the part of the header prefix after tx_root
-    /** Returns (score, baseline) as whole numbers; lower score is better. Throws if invalid. */
-    fun score(prevHash: String, value: Any): Pair<Long, Long>
+    /** Returns (score, baseline) as whole numbers; lower score is better. Throws if invalid.
+     *  [scouted]: survey stars cited as scouted (Pulsarite only). */
+    fun score(prevHash: String, value: Any, scouted: List<Int> = emptyList()): Pair<Long, Long>
 }
 
 private fun sha256(b: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(b)
@@ -143,7 +144,12 @@ class SoloChain(private val file: File, val rules: CoinRules, val useful: Useful
 
     /** Everything needed to mine the next block, except the useful work and the nonce. */
     class Template(val height: Long, val prev: String, val timestamp: Long, val target: String,
-                   val coinbase: String, val txRoot: String, val reward: Long)
+                   val coinbase: String, val txRoot: String, val reward: Long) {
+        /** Nebulite scouts cited by this block (Pulsarite solo chains; see Scouts.kt). */
+        var scouts: List<Scouts.Info> = emptyList()
+    }
+
+    @Synchronized fun blocksSnapshot(): List<JSONObject> = blocks.toList()
 
     /** Who owns each username on this chain, replaying the coinbase claims as a node does
      *  (claiming a new name releases the address's old one). */
@@ -172,9 +178,13 @@ class SoloChain(private val file: File, val rules: CoinRules, val useful: Useful
 
     /** The header prefix and hash target for a template with a given useful-work value. */
     fun prepare(t: Template, value: Any): Pair<ByteArray, BigInteger> {
-        val (score, baseline) = useful.score(t.prev, value)
-        val prefix = headerPrefix(t.height, t.prev, t.timestamp, t.target, t.txRoot, useful.headerText(value))
-        return prefix to effectiveTarget(t.target, score, baseline)
+        val (score, baseline) = useful.score(t.prev, value, t.scouts.map { it.star })
+        val scoutsJson = if (t.scouts.isEmpty()) null else Scouts.proofsJson(t.scouts)
+        val prefix = headerPrefix(t.height, t.prev, t.timestamp, t.target, t.txRoot,
+            useful.headerText(value) + Scouts.headerPart(scoutsJson))
+        val eff = effectiveTarget(t.target, score, baseline)
+        for (sc in t.scouts) require(Scouts.workOk(sc, eff)) { "SCOUT_WEAK:${sc.hash}" }
+        return prefix to eff
     }
 
     /** Adds a mined block. Returns null on success, or why it was refused. */
@@ -187,6 +197,7 @@ class SoloChain(private val file: File, val rules: CoinRules, val useful: Useful
             .put("height", t.height).put("prev_hash", t.prev).put("timestamp", t.timestamp)
             .put("target", t.target).put("txs", JSONArray().put(JSONObject(t.coinbase)))
             .put(useful.field, value).put("nonce", nonce).put("tx_root", t.txRoot).put("hash", hash)
+            .also { if (t.scouts.isNotEmpty()) it.put("scouts", Scouts.proofsJson(t.scouts)) }
         save()
         return null
     }
@@ -293,15 +304,21 @@ class StarRouteRules : UsefulRules {
         baselineCache.getOrPut(prevHash) { val st = stops(prevHash); time(baseline(problem(prevHash), st), st) }
     }
 
-    override fun score(prevHash: String, value: Any): Pair<Long, Long> {
+    override fun score(prevHash: String, value: Any, scouted: List<Int>): Pair<Long, Long> {
         val plan = Plan.fromJson(value as JSONArray)
         val prob = problem(prevHash)
         require(plan.ids.sorted() == prob && plan.speeds.all { it in 1..StarField.MAX_PCT }) {
             "route must visit each of the block's stars exactly once, as [star id, cruise speed 1-10] pairs"
         }
-        val st = stops(prevHash)
+        val all = stops(prevHash)
+        val st = all.filter { it !in scouted }                  // scouted stops are flown past
         require(dv(plan, st) <= SoloData.DV_BUDGET_PCT_C * SoloData.PROBE_SPEED * 100) { "route needs more fuel than the probe carries" }
-        return time(plan, st) to baselineTime(prevHash)
+        var length = time(plan, st)
+        if (st.size < all.size) {    // scouts shorten the scored time by at most 2% (as chain.route_score)
+            val unscouted = time(plan, all)
+            length = maxOf(length, Math.floorDiv(unscouted * Scouts.TIME_CAP_DEN + Scouts.TIME_CAP_NUM - 1, Scouts.TIME_CAP_NUM))
+        }
+        return length to baselineTime(prevHash)
     }
 }
 
@@ -430,7 +447,7 @@ class TrajectoryRules : UsefulRules {
             .put("cost", Math.rint(ev.cost).toLong()).put("baseline", Math.rint(baseline(prevHash).first).toLong())
     }
 
-    override fun score(prevHash: String, value: Any): Pair<Long, Long> {
+    override fun score(prevHash: String, value: Any, scouted: List<Int>): Pair<Long, Long> {
         val o = value as JSONObject
         return o.getLong("cost") to o.getLong("baseline")
     }

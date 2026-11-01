@@ -53,7 +53,7 @@ Today: planets from the full VSOP87A theory (about 1″, valid for millennia); L
 
 - [x] **Escape missions** (about 1 Nebulite block in 5): leave the solar system aimed exactly at a Pulsarite star, scored by years to 550 AU; flybys, optional Sun dives, realistic launch and fuel limits; always solvable.
 - [x] **Scouts:** Pulsarite blocks cite Nebulite escapes aimed at their survey stars (a proof carried in the block, checked independently); a scouted stop becomes a flyby. Anti-forgery work rule, one citation per scout, capped hashing benefit.
-  - [ ] Scouts in solo mode (cite blocks from the phone's own Nebulite solo chain).
+  - [x] Scouts in solo mode (cite blocks from the phone's own Nebulite solo chain).
   - [ ] Credit the scout's Nebulite miner on the Pulsarite chain (same key, `plsr…` address).
 - [ ] ~~Literal hand-off~~: starting Pulsarite probes at 550 AU with Nebulite's speed changes mission times by days, so scouts replaced it.
 - [ ] **Interstellar-object intercepts:** missions to catch objects passing through from other stars (like 'Oumuamua), with short-notice launch windows.
