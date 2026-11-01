@@ -211,6 +211,7 @@ Nodes forward new blocks and transactions to each other and re-sync every 30 sec
 | GET | `/routes?limit=20` | the route map: recent blocks' routes, lengths, improvement |
 | GET | `/stars` | the star catalog in use (with `planets` per star) |
 | GET | `/map` | the web map page; `/map/data` is its data |
+| (Nebulite) GET | `/scouts?stars=1,49` | escape-mission blocks in the form Pulsarite blocks cite them as scouts |
 | POST | `/chain/import` | offer a whole chain (e.g. from solo mode); adopted if valid and longer |
 | GET | `/name/<name>` | the address that owns a username |
 | GET | `/names` | every claimed username |
@@ -290,6 +291,19 @@ About **1 Nebulite block in 5** is an **escape mission**. The block's hash picks
 - **Baseline:** the best of three textbook strategies on a coarse grid (direct launch, Jupiter flyby, Jupiter flyby plus Sun dive), each at the fastest speed its limits allow.
 
 Typical results in testing: the best escapes left at 30–37 km/s (**6–8 AU per year**, about twice Voyager 1's 3.6), reaching 550 AU in 70–90 years. Most were 20–30 km/s, and awkward star directions in poor launch windows can be much slower. APL's Interstellar Probe study targets about 7 AU per year with today's technology. Even so, Alpha Centauri is tens of thousands of years away at these speeds. Reaching the stars needs new propulsion, and these departures are the first leg of any such mission. The mission log, HUD, MAP tab and web map show each escape's target star, speed and the year it passes 550 AU, with a pointer toward the star.
+
+### Scouts: how Nebulite's escapes guide Pulsarite's routes
+
+Pulsarite's probe assumes a future drive, reaching 10% of light speed, while Nebulite's craft are chemical rockets we could launch this decade. A literal hand-off would barely help Pulsarite: Nebulite's 35 km/s is a thousandth of its speed. Instead the two coins link the way real exploration works: **scout first, then send the big probe.**
+
+- **A Nebulite escape is a scout.** Past 550 AU it uses the Sun's gravity as a lens to image its target star's planets.
+- **A scouted stop becomes a flyby.** When a Pulsarite block's survey stop has been scouted, the probe doesn't need to stop there: it flies past at speed, with no braking, no survey years, and much less fuel. In testing, one scouted stop made a whole mission 12–24% faster (600–1,200 years), and four made it about 40% faster.
+- **The proof travels in the block.** A Pulsarite block cites a scout by including the Nebulite block itself (header, trajectory and nonce). Every Pulsarite node re-checks the escape physics and the proof of work on its own, so it never contacts the Nebulite network and neither chain can stall the other.
+- **Forging doesn't pay.** A cited Nebulite block must carry at least a third of the hashing the Pulsarite block needs. Each Nebulite block can be cited only once. Scouts can make a Pulsarite hash target at most about 1.27× easier, which saves at most 21% of the hashing. So a fake scout always costs more than it saves, while the full time saving still shows in the mission log and maps.
+- **Automatic for miners.** Start the Pulsarite node with `NEBULITE_URL` set to a Nebulite node (the Docker setup does this). It then fetches escape missions from that node's `/scouts`, checks them, and attaches the best one for each survey stop to the work it hands out. Phones and `miner.py` simply see the scouted stops as flybys. The RIG line shows `+ 1 SCOUTED`, and the maps mark scouted stars ✦.
+- **Not in solo mode yet:** scouts need a Pulsarite node and a Nebulite node.
+
+`python tools/make_scouts.py` mines Nebulite escape blocks for testing and demos.
 
 Every Nebulite node reports `star_catalog_id` in `/info`. It should equal the Pulsarite node's `catalog_id`, which confirms both coins use the same stars. `nebulite/star_targets.json` is generated from Pulsarite's catalog by `tools/gen_solo_data.py`.
 

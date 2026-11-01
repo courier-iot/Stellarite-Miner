@@ -37,10 +37,12 @@ data class RouteInfo(
     val stopIds: List<Int> = emptyList(),   // survey stars where the probe stops
     val speedsPct: List<Int> = emptyList(), // each leg's cruise speed, % of light speed
     val fuelUsedPct: Double = 0.0,          // share of the fuel budget the plan burns
+    val scoutedIds: List<Int> = emptyList(), // survey stars already imaged by Nebulite scouts: flown past
 ) : UsefulWork {
     override val summary get() = String.format(java.util.Locale.US,
-        "ROUTE %d★ · %d STOPS · %,.0f YR · %.0f LY · FUEL %.0f%% · %.1f%% FASTER THAN GREEDY",
-        starIds.size, stopIds.size, years, lightYears, fuelUsedPct, improvementPct)
+        "ROUTE %d★ · %d STOPS%s · %,.0f YR · %.0f LY · FUEL %.0f%% · %.1f%% FASTER THAN GREEDY",
+        starIds.size, stopIds.size, if (scoutedIds.isEmpty()) "" else " + ${scoutedIds.size} SCOUTED",
+        years, lightYears, fuelUsedPct, improvementPct)
     override val gainPct get() = improvementPct
 }
 

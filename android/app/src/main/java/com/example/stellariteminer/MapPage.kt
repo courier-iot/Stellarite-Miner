@@ -175,6 +175,7 @@ class MapPage(
     private var focusLegs: List<StarField.Leg> = emptyList()
     private var focusLabel = ""
     private var focusStops: Set<Int> = emptySet()   // survey stars of the focus route (catalog ids)
+    private var focusScouted: Set<Int> = emptySet() // survey stars already imaged by Nebulite scouts
 
     private fun catalogField(cat: JSONArray, p: JSONObject, stopIds: Set<Int> = emptySet()): StarField {
         val n = cat.length()
@@ -206,6 +207,7 @@ class MapPage(
         val newest = if (rs.length() > 0) rs.getJSONObject(0) else null
         focusIds = live ?: newest?.optJSONArray("route_ids")?.let { a -> List(a.length()) { a.getInt(it) } } ?: emptyList()
         focusStops = liveWork?.stopIds?.toSet() ?: idSet(newest?.optJSONArray("stop_ids"))
+        focusScouted = liveWork?.scoutedIds?.toSet() ?: idSet(newest?.optJSONArray("scouted_ids"))
         focusLabel = if (live != null) "LIVE ROUTE" else if (newest != null) "BLOCK ${newest.getInt("height")} ROUTE" else ""
         focusSpeeds = liveWork?.speedsPct?.toIntArray() ?: speedsFor(focusIds.size, newest?.optJSONArray("speeds_pct_c"))
         focusLegs = if (focusIds.isEmpty()) emptyList() else {
@@ -235,6 +237,7 @@ class MapPage(
             val w = shownWork as? RouteInfo
             if (live != null && w != null) append(String.format(Locale.US, "\n> LIVE ROUTE (AMBER): %,.0f YR · %d SURVEY STOPS (◆) · FUEL %.0f%%", w.years, w.stopIds.size, w.fuelUsedPct))
             else if (focusStops.isNotEmpty()) append("\n> ${focusStops.size} SURVEY STOPS (◆): THE PROBE BRAKES TO A HALT AND SURVEYS ${SoloData.SURVEY_YEARS} YEARS + ${SoloData.SURVEY_YEARS_PER_PLANET} PER PLANET (●)")
+            if (focusScouted.isNotEmpty()) append("\n> ${focusScouted.size} SCOUTED (✦): A NEBULITE ESCAPE ALREADY IMAGED IT, SO THE PROBE FLIES PAST")
             if (focusLegs.isNotEmpty()) append("\n> SLIDE TO FLY THE $focusLabel · TAP A STAR FOR DETAILS")
             else append("\n> TAP A STAR FOR DETAILS · DRAG TO ROTATE · PINCH TO ZOOM")
         }
@@ -276,14 +279,16 @@ class MapPage(
                     append(String.format(Locale.US, "\nLeg cruise speed: %d%% of light speed · fuel used on this leg: %.1f%% of c",
                         leg.pctC, leg.dv / 10_000.0))
                     if (stop) append("\nSURVEY STOP: the probe brakes to rest and surveys until ${yearText(leg.depart)}")
+                    else if (id in focusScouted) append("\nSCOUTED: a Nebulite escape probe imaged this system through the Sun's gravitational lens, so this probe flies past instead of stopping")
                     else append(String.format(Locale.US, "\nPasses at %.1f%% of light speed", leg.speed / 10_000.0))
                 }
             }
             points += MapPoint(p[0] / 1000.0, p[1] / 1000.0, p[2] / 1000.0,
                 when { leg == null -> Theme.TEXT; visited -> Theme.AMBER; else -> Theme.CRIMSON_LIGHT },
                 if (leg != null) 3.2f else 1.8f,
-                (if (id in focusStops) "◆ " else "") + name.uppercase(Locale.US) + (if (sp.optInt("planets", 0) > 0) " ●${sp.optInt("planets")}" else ""),
-                alwaysLabel = (leg != null && timeF > 0 && visited) || id in focusStops,
+                (if (id in focusStops) "◆ " else if (id in focusScouted) "✦ " else "") + name.uppercase(Locale.US) +
+                    (if (sp.optInt("planets", 0) > 0) " ●${sp.optInt("planets")}" else ""),
+                alwaysLabel = (leg != null && timeF > 0 && visited) || id in focusStops || id in focusScouted,
                 glow = leg != null, info = details, key = "star$id")
         }
         // the probe

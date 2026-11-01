@@ -6,7 +6,17 @@ Release numbers are **MAJOR.MEDIUM.MINOR**, and every feature is tagged by size:
 - **[MEDIUM]** a notable addition or improvement to something that already exists
 - **[MINOR]** a small tweak, a fix or polish
 
-A release bumps the number for the biggest change in it and resets the ones after it: a major feature takes 5.4.3 to 6.0.0, a medium one to 5.5.0, and minor-only changes to 5.4.4. The app's `versionName` in `android/app/build.gradle.kts` matches the latest release here, and `versionCode` is MAJOR×10000 + MEDIUM×100 + MINOR (9.0.0 → 90000). Tag a release (e.g. `v7.0.0`) on GitHub and the workflow attaches the APK.
+A release bumps the number for the biggest change in it and resets the ones after it: a major feature takes 5.4.3 to 6.0.0, a medium one to 5.5.0, and minor-only changes to 5.4.4. The app's `versionName` in `android/app/build.gradle.kts` matches the latest release here, and `versionCode` is MAJOR×10000 + MEDIUM×100 + MINOR (10.0.0 → 100000). Tag a release (e.g. `v7.0.0`) on GitHub and the workflow attaches the APK.
+
+## 10.0.0: Nebulite scouts guide Pulsarite routes
+
+- **[MAJOR]** Scouts: a Pulsarite block can cite Nebulite escape missions aimed at its survey stars. A scouted stop becomes a flyby: no braking, no survey and much less fuel, making missions 12–24% faster per scouted stop in testing. *Consensus change: new Pulsarite chain (genesis v6).*
+- **[MAJOR]** Cross-chain proofs without cross-chain trust: the cited Nebulite block travels inside the Pulsarite block, and Pulsarite nodes re-check its escape physics and proof of work themselves (Nebulite's physics is loaded by `node/scouts.py`).
+- **[MEDIUM]** Anti-forgery rules: a scout must carry at least 1/3 of the citing block's needed work, each Nebulite block can be cited once, and scouts ease a Pulsarite hash target by at most about 1.27×.
+- **[MEDIUM]** The Pulsarite node fetches scouts from `NEBULITE_URL` and attaches the best valid one per survey stop to its work. A new Nebulite endpoint, `/scouts`, publishes escape blocks as proofs. Docker sets this up automatically.
+- **[MINOR]** Scouted stars on the RIG line (`+ 1 SCOUTED`), the MAP tab and the web map (✦), and in `/routes` and `miner.py` output.
+- **[MINOR]** `tools/make_scouts.py` mines Nebulite escape blocks for tests and demos.
+- **[MINOR]** `numpy` is now a Pulsarite node requirement too (for checking scouts).
 
 ## 9.0.0: Escape missions, linking Nebulite and Pulsarite
 

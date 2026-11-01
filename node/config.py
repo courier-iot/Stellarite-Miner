@@ -58,4 +58,13 @@ EXHAUST_PCT_C = 10                  # exhaust speed (advanced fusion), for the m
 LAUNCH_YEAR = 2100
 
 GENESIS_TIMESTAMP = 1_790_812_800  # 2026-10-01 00:00 UTC
-GENESIS_MESSAGE = "Pulsarite genesis v5 - surveys of planetary systems"
+GENESIS_MESSAGE = "Pulsarite genesis v6 - Nebulite scouts guide the routes"
+
+# Scouts: a block may cite Nebulite escape missions aimed at its survey stars (see scouts.py).
+# A scouted stop no longer needs a stop: the probe flies past at speed.
+SCOUT_MAX_PER_BLOCK = 4
+SCOUT_MIN_WORK_DIVISOR = 3          # a scout must carry at least 1/3 of the work the citing block needs
+# Scouts can shorten the mission time used for the hash target by at most 2% (51/50), i.e. a target
+# at most 1.02^12 = 1.27x easier, which saves at most 21% of a block's hashing. A scout must itself carry
+# at least 1/3 (33%) of the hashing the citing block needs, so forging one always costs more than it saves.
+SCOUT_TIME_CAP_NUM, SCOUT_TIME_CAP_DEN = 51, 50

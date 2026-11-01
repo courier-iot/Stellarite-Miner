@@ -380,6 +380,28 @@ def map_data():
         return jsonify(_map_cache[key])
 
 
+@app.get("/scouts")
+def scouts():
+    """Escape-mission blocks, in the form Pulsarite blocks cite them as scouts (?stars=1,49 to filter by
+    target star id). Each is the block's header fields, trajectory and nonce."""
+    want = {int(x) for x in request.args.get("stars", "").split(",") if x.strip().isdigit()}
+    limit = max(1, min(request.args.get("limit", 50, type=int), 500))
+    out = []
+    with lock:
+        for b in reversed(chain.blocks[1:]):
+            tr = b.get("trajectory") or {}
+            if "escape" not in tr:
+                continue
+            star = T.problem(b["prev_hash"])["target_star"]
+            if want and star["id"] not in want:
+                continue
+            out.append({"star": star["id"], "star_name": star["name"], "proof": {
+                k: b[k] for k in ("height", "prev_hash", "timestamp", "target", "tx_root", "trajectory", "nonce")}})
+            if len(out) >= limit:
+                break
+    return jsonify(out)
+
+
 @app.get("/missions")
 def missions():
     """Recent blocks' trajectories: the mission plans the network has produced."""

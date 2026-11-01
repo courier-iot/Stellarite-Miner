@@ -14,9 +14,10 @@ from collections import OrderedDict
 from flask import Flask, jsonify, request
 
 import config as C
+import scouts
 import stars
 from chain import (Blockchain, ValidationError, block_hash, effective_target, header_prefix,
-                   next_target, route_score, tx_sender, work)
+                   next_target, route_score, scout_work_ok, tx_sender, work)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024   # room for imported chains
@@ -223,13 +224,42 @@ def add_peer():
 # 3. search nonces: sha256d(prefix + 8-byte big-endian nonce) <= target
 # 4. POST /mining/submit {job_id, route, nonce}
 
+NEBULITE_URL = None              # set by --nebulite / NEBULITE_URL: where to find scouts
+_scout_cache = {"key": None, "at": 0.0, "proofs": []}
+_weak_scouts = {}                 # tip hash -> scouts that lacked work for a miner's route (not offered again)
+
+
+def fetch_scouts(prev_hash):
+    """Candidate scout proofs for this block's survey stops from the configured Nebulite node.
+    A convenience only: every proof is re-verified, and blocks never depend on this call."""
+    if not NEBULITE_URL:
+        return []
+    stops = stars.stops(prev_hash)
+    key = (prev_hash, tuple(stops))
+    if _scout_cache["key"] == key and time.time() - _scout_cache["at"] < 60:
+        return _scout_cache["proofs"]
+    try:
+        url = NEBULITE_URL.rstrip("/") + "/scouts?stars=" + ",".join(map(str, stops))
+        with urllib.request.urlopen(url, timeout=5) as r:
+            proofs = [row["proof"] for row in json.loads(r.read())]
+    except Exception as e:
+        print(f"[scouts] couldn't reach the Nebulite node at {NEBULITE_URL}: {e}")
+        proofs = []
+    _scout_cache.update(key=key, at=time.time(), proofs=proofs)
+    return proofs
+
+
 @app.get("/mining/work")
 def mining_work():
     address = request.args.get("address", "")
     name = request.args.get("name", "").strip().upper() or None
+    candidates = fetch_scouts(chain.tip["hash"])
     try:
         with lock:
-            template = chain.build_template(address, name=name)
+            weak = _weak_scouts.get(chain.tip["hash"], set())
+            usable = (chain.usable_scouts(chain.tip["hash"], next_target(chain.blocks), candidates, weak)
+                      if candidates else [])
+            template = chain.build_template(address, name=name, scouts=usable)
             job_id = secrets.token_hex(8)
             jobs[job_id] = template
             while len(jobs) > MAX_JOBS:
@@ -239,11 +269,17 @@ def mining_work():
     problem = stars.problem(template["prev_hash"])
     stop_ids = stars.stops(template["prev_hash"])
     baseline = stars.baseline_route(problem, stop_ids)
+    cited = [scouts.verify(p) for p in template.get("scouts", [])]
+    scouted = [c["star"] for c in cited]
     return jsonify({
         "job_id": job_id,
         "height": template["height"],
         "stars": [dict(stars.CATALOG[i]) for i in problem],
-        "stops": stop_ids,
+        "stops": [s for s in stop_ids if s not in scouted],      # scouted stops are flown past
+        "survey_stops": stop_ids,
+        "scouted": scouted,
+        "scouts": [{"star": c["star"], "star_name": c["star_name"], "nebulite_block": c["hash"],
+                    "vinf_kms": round(c["vinf_kms"], 1), "au_per_year": round(c["au_per_year"], 2)} for c in cited],
         "baseline_route": baseline,
         "baseline_years": stars.route_time(baseline, stop_ids) / 1000,
         "survey_years": C.SURVEY_YEARS,
@@ -264,7 +300,8 @@ def _job_block(job_id, route):
     template = jobs.get(job_id)
     if template is None:
         raise LookupError("unknown or expired job")
-    score = route_score(template["prev_hash"], route)
+    scouted = [scouts.verify(p)["star"] for p in template.get("scouts", [])]
+    score = route_score(template["prev_hash"], route, scouted)
     block = dict(template, route=list(route))
     return template, block, score
 
@@ -280,15 +317,22 @@ def mining_route():
         except ValidationError as e:
             return err(str(e))
     target = effective_target(block["target"], score["length"], score["baseline"])
-    stop_ids = stars.stops(block["prev_hash"])
+    weak = [v for v in (scouts.verify(p) for p in block.get("scouts", [])) if not scout_work_ok(v, target)]
+    if weak:
+        _weak_scouts.setdefault(block["prev_hash"], set()).update(v["hash"] for v in weak)
+        names = ", ".join(v["star_name"] for v in weak)
+        return err(f"the Nebulite scout of {names} doesn't carry enough work for this route; "
+                   "fetch new work (it won't be offered again for this block)", 409)
     return jsonify({
         "prefix": header_prefix(block).hex(),
         "target": format(target, "064x"),
-        "years": score["length"] / 1000,
+        "years": score["mission_time"] / 1000,
+        "scored_years": score["length"] / 1000,      # what the hash target uses (scout benefit capped)
         "baseline_years": score["baseline"] / 1000,
-        "length_ly": stars.route_length(body.get("route"), stop_ids) / 1000,
+        "length_ly": stars.route_length(body.get("route"), score["stops"]) / 1000,
         "fuel_used_pct": round(100 * score["dv"] / stars.DV_BUDGET, 1),
-        "improvement_pct": round(100 * (1 - score["length"] / score["baseline"]), 2),
+        "improvement_pct": round(100 * (1 - score["mission_time"] / score["baseline"]), 2),
+        "scouted": len(block.get("scouts", [])),
     })
 
 
@@ -395,7 +439,7 @@ def lan_addresses():
 
 
 def main():
-    global chain, self_url
+    global chain, self_url, NEBULITE_URL
     ap = argparse.ArgumentParser(description=f"{C.COIN_NAME} node")
     env = os.environ   # every option can also come from the environment (handy for Docker)
     ap.add_argument("--host", default=env.get("HOST", "0.0.0.0"))
@@ -405,9 +449,12 @@ def main():
                     default=[p for p in env.get("PEERS", "").split(",") if p.strip()],
                     help="peer node URL (repeatable; env PEERS is comma-separated)")
     ap.add_argument("--public-url", default=env.get("PUBLIC_URL"), help="URL other nodes use to reach this one")
+    ap.add_argument("--nebulite", default=env.get("NEBULITE_URL"),
+                    help="a Nebulite node to fetch scouts from (its escape missions guide routes); optional")
     args = ap.parse_args()
 
     chain = Blockchain(args.data)
+    NEBULITE_URL = args.nebulite
     self_url = args.public_url
     for p in args.peer:
         peers.add(p.rstrip("/"))
@@ -419,6 +466,9 @@ def main():
     threading.Thread(target=sync_loop, daemon=True).start()
     print(f"{C.COIN_NAME} node on {args.host}:{args.port}, height {chain.tip['height']}, "
           f"star catalog: {stars.CATALOG_SOURCE} ({len(stars.CATALOG)} stars, id {stars.CATALOG_ID})")
+    if NEBULITE_URL:
+        print(f"Scouts: Nebulite escape missions from {NEBULITE_URL} can guide routes"
+              + ("" if scouts.NT else " (but Nebulite's physics files are missing, so none can be checked)"))
     ips = lan_addresses()
     if ips:
         print("Phones on the same Wi-Fi: set NODE_URI to " +

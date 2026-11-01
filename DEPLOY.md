@@ -52,6 +52,8 @@ From any browser:
 - `https://nodes.example.com/pulsarite/info`
 - `https://nodes.example.com/pulsarite/map` and `https://nodes.example.com/nebulite/map`: the web maps, which you can share with anyone
 
+The Pulsarite node is already connected to the Nebulite node (`NEBULITE_URL` in `docker-compose.yml`), so Nebulite escape missions automatically scout Pulsarite's survey stars. Running nodes by hand, start Pulsarite with `NEBULITE_URL=http://<nebulite node>:5001` (or `--nebulite`) to do the same.
+
 ## 5. Point the app at it
 
 On the RIG tab, pick **NBLT** or **PLSR** and set NODE_URI to `https://nodes.example.com/nebulite` or `https://nodes.example.com/pulsarite`. Use the app's own wallet (**[NEW WALLET]**) for your address: you don't need, and shouldn't keep, a wallet file on the server.

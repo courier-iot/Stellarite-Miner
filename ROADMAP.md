@@ -52,7 +52,10 @@ Today: planets from the full VSOP87A theory (about 1″, valid for millennia); L
 ## Nebulite × Pulsarite: interstellar departures
 
 - [x] **Escape missions** (about 1 Nebulite block in 5): leave the solar system aimed exactly at a Pulsarite star, scored by years to 550 AU; flybys, optional Sun dives, realistic launch and fuel limits; always solvable.
-- [ ] **Hand-off to Pulsarite:** start Pulsarite routes from a mined Nebulite departure (the probe's real position and speed at 550 AU), instead of from rest at the Sun.
+- [x] **Scouts:** Pulsarite blocks cite Nebulite escapes aimed at their survey stars (a proof carried in the block, checked independently); a scouted stop becomes a flyby. Anti-forgery work rule, one citation per scout, capped hashing benefit.
+  - [ ] Scouts in solo mode (cite blocks from the phone's own Nebulite solo chain).
+  - [ ] Credit the scout's Nebulite miner on the Pulsarite chain (same key, `plsr…` address).
+- [ ] ~~Literal hand-off~~: starting Pulsarite probes at 550 AU with Nebulite's speed changes mission times by days, so scouts replaced it.
 - [ ] **Interstellar-object intercepts:** missions to catch objects passing through from other stars (like 'Oumuamua), with short-notice launch windows.
 - [ ] **Precursor targets:** the heliopause (about 120 AU) and the Sun's gravitational lens focal line toward a target star, as mission goals of their own.
 - [ ] **Powered Jupiter flybys:** a burn at Jupiter closest approach (the "Jupiter Oberth" option the Interstellar Probe study preferred).
@@ -93,3 +96,4 @@ Today: planets from the full VSOP87A theory (about 1″, valid for millennia); L
 - [x] Pulsarite: planet-weighted survey stops; Nebulite: mission types and dates; web map on every node
 - [x] Nebulite: full VSOP87A planet positions, accurate well past 2050
 - [x] Nebulite × Pulsarite: escape missions toward Pulsarite stars
+- [x] Nebulite escapes scout Pulsarite's survey stars

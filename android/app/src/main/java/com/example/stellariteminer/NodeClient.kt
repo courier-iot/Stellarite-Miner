@@ -63,7 +63,8 @@ class NodeClient(baseUrl: String, private val address: String = "", private val 
             work = RouteInfo(route, scored.getDouble("years"), scored.getDouble("baseline_years"),
                 scored.getDouble("improvement_pct"), scored.getDouble("length_ly"),
                 (0 until f.size).filter { f.stop[it] }.map { f.ids[it] }, speeds,
-                scored.optDouble("fuel_used_pct", 0.0)),
+                scored.optDouble("fuel_used_pct", 0.0),
+                work.optJSONArray("scouted")?.let { a -> List(a.length()) { a.getInt(it) } } ?: emptyList()),
         )
     }
 

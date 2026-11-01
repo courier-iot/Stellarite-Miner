@@ -16,7 +16,7 @@ object SoloData {
         maxRetargetFactor = 4,
         genesisDifficultyBits = 20,
         genesisTimestamp = 1790812800L,
-        genesisMessage = "Pulsarite genesis v5 - surveys of planetary systems",
+        genesisMessage = "Pulsarite genesis v6 - Nebulite scouts guide the routes",
         bonusExponent = 12,
     )
 

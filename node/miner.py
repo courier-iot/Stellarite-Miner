@@ -78,7 +78,8 @@ def main():
         rate = tried / max(time.time() - t0, 1e-6)
         route_txt = (f"mission {scored['years']:,.0f} yr vs greedy {scored['baseline_years']:,.0f} yr "
                      f"({scored['improvement_pct']:+.1f}% faster, {scored['length_ly']:.0f} ly flown, "
-                     f"{scored['fuel_used_pct']:.0f}% of fuel)")
+                     f"{scored['fuel_used_pct']:.0f}% of fuel"
+                     + (f", {scored['scouted']} stop(s) scouted by Nebulite" if scored.get("scouted") else "") + ")")
         if nonce is None:
             print(f"height {work['height']}: {route_txt}, {rate/1000:.0f} kH/s, refreshing")
             continue

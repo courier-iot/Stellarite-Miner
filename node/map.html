@@ -143,19 +143,26 @@ function drawStars() {
   if (sel) polyline(sel.points, COL.amber, 2.2, 1);
   const onRoute = new Map(); if (sel) sel.route_ids.forEach((id, k) => onRoute.set(id, k));
   const stops = new Set(sel ? sel.stop_ids : []);
+  const scouted = new Set(sel ? (sel.scouted_ids || []) : []);
   dot([0, 0, 0], COL.amber, 4.5, "SOL", true, `<span class="k">SOL</span>\nThe probe launches from here in ${data.launch_year}.`);
   data.stars.forEach(s => {
     const k = onRoute.get(s.id), stop = stops.has(s.id);
     const p = sel && k !== undefined ? sel.points[k + 1] : s.p;
-    const color = stop ? COL.amber : k !== undefined ? COL.crimsonLight : COL.text;
+    const scout = scouted.has(s.id);
+    const color = stop || scout ? COL.amber : k !== undefined ? COL.crimsonLight : COL.text;
     const ends = sel && (k === 0 || k === sel.route_ids.length - 1);
-    const label = stop || ends ? (stop ? "◆ " : "") + s.name.toUpperCase() + (s.planets ? " ●" + s.planets : "") : "";
+    const label = stop || ends || scout ? (stop ? "◆ " : scout ? "✦ " : "") + s.name.toUpperCase() + (s.planets ? " ●" + s.planets : "") : "";
     let d = `<span class="k">${esc(s.name.toUpperCase())}</span>\n${fmt(Math.hypot(...s.p), 2)} ly from the Sun in ${data.launch_year}`;
     d += s.planets ? `\nKnown planets: ${s.planets}` : "\nNo planets known yet";
     if (sel && k !== undefined) {
       d += `\nBlock ${sel.height}: star ${k + 1} of ${sel.route_ids.length}, reached in ${fmt(sel.arrive_years[k])}`;
       d += `\nLeg cruise speed: ${sel.speeds_pct_c[k]}% of light speed`;
       if (stop) d += "\nSURVEY STOP: the probe brakes to rest and surveys the system";
+      if (scout) {
+        const sc = (sel.scouts || []).find(x => x.star === s.name);
+        d += "\nSCOUTED: a Nebulite escape probe" + (sc ? ` (${fmt(sc.vinf_kms, 1)} km/s, Nebulite block ${sc.nebulite_block.slice(0, 10)}…)` : "") +
+             " imaged this system through the Sun's gravitational lens, so the route flies past instead of stopping";
+      }
     }
     dot(p, color, k !== undefined ? 3.2 : 1.8, label, k !== undefined, d);
   });
@@ -197,7 +204,8 @@ function renderList() {
     const by = r.miner_name ? ` · by ${esc(r.miner_name)}` : "";
     const body = kind === "stars"
       ? `<span class="t">BLOCK ${r.height}</span>${by}<br>${fmt(r.years)} yr · ${fmt(r.length_ly)} ly · fuel ${fmt(r.fuel_used_pct)}%<br>` +
-        `<span class="m">${fmt(r.improvement_pct, 1)}% faster than greedy · stops: ${esc(r.stops.join(", "))}</span>`
+        `<span class="m">${fmt(r.improvement_pct, 1)}% faster than greedy · stops: ${esc(r.stops.join(", "))}` +
+        (r.scouted && r.scouted.length ? ` · scouted by Nebulite: ${esc(r.scouted.join(", "))}` : "") + `</span>`
       : r.mission_type === "escape"
       ? `<span class="t">BLOCK ${r.height}</span> · escape → ${esc(r.target_star)}${by}<br>${esc(r.path.join("–"))}<br>` +
         `<span class="m">${fmt(r.vinf_kms, 1)} km/s (${fmt(r.au_per_year, 2)} AU/yr) · 550 AU in ${fmt(r.years)} yr, ${r.arrival_date.slice(0, 4)} · ${fmt(r.improvement_pct, 1)}% faster than baseline</span>`
@@ -233,7 +241,7 @@ async function load() {
     document.title = `${d.coin} Map`;
     document.getElementById("title").textContent = `${d.coin.toUpperCase()} // MAP`;
     document.getElementById("key").textContent = kind === "stars"
-      ? " · ◆ SURVEY STOP · ● KNOWN PLANETS · DISTANCES COMPRESSED"
+      ? " · ◆ SURVEY STOP · ✦ SCOUTED BY NEBULITE · ● KNOWN PLANETS · DISTANCES COMPRESSED"
       : " · DISTANCES COMPRESSED";
     document.getElementById("sub").innerHTML = kind === "stars"
       ? `star routes · <b>${d.stars.length}</b> moving stars · height <b>${d.height}</b>`

@@ -1,5 +1,6 @@
 """Run from the node/ folder:  python -m unittest discover tests"""
 import hashlib
+import json
 import math
 import os
 import sys
@@ -14,10 +15,21 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import config as C  # noqa: E402
 import chain as ch  # noqa: E402
 import stars  # noqa: E402
+import scouts as SC  # noqa: E402
 from route_opt import optimise  # noqa: E402
 from crypto_utils import (address_from_pubkey, is_valid_address, new_private_key,  # noqa: E402
                           public_key_hex, sign)
 
+
+
+def work_for(prev_hash, scouted=()):
+    """The planning data a node's /mining/work gives a miner (scouted stops are flown past)."""
+    prob, st = stars.problem(prev_hash), stars.stops(prev_hash)
+    return {"stars": [dict(stars.CATALOG[i]) for i in prob], "stops": [s for s in st if s not in scouted],
+            "probe_speed_mly_per_year": stars.SPEED, "probe_accel_mly_per_year2": C.PROBE_ACCEL_MLY_PER_YEAR2,
+            "survey_years": C.SURVEY_YEARS, "survey_years_per_planet": C.SURVEY_YEARS_PER_PLANET,
+            "dv_budget_pct_c": C.DV_BUDGET_PCT_C, "launch_t": stars.LAUNCH_T,
+            "intercept_iterations": stars.INTERCEPT_ITERATIONS}
 
 
 def base_plan(prev_hash):
@@ -196,8 +208,9 @@ class ChainTests(unittest.TestCase):
         t = self.bc.build_template(self.alice.addr, now=self.clock())
         problem = stars.problem(t["prev_hash"])
         pts = [stars.pos(i) for i in problem]
-        pct = base_plan(t["prev_hash"])[0][1]
-        best = [[problem[i], pct] for i in optimise(pts, seconds=0.5, seed=3)]
+        from route_opt import optimise_plan
+        order = [problem[i] for i in optimise(pts, seconds=0.5, seed=3)]
+        best = optimise_plan(order, work_for(t["prev_hash"]), 0.5)        # order + speeds within the fuel budget
         sc_base = ch.route_score(t["prev_hash"], base_plan(t["prev_hash"]))
         sc_best = ch.route_score(t["prev_hash"], best)
         self.assertLess(sc_best["length"], sc_base["length"])
@@ -473,6 +486,121 @@ class ApiTests(unittest.TestCase):
     def test_bad_address_refused(self):
         r = self.client.get("/mining/work?address=nope")
         self.assertEqual(r.status_code, 400)
+
+
+class ScoutTests(unittest.TestCase):
+    """Nebulite escape missions cited as scouts by Pulsarite blocks."""
+
+    @classmethod
+    def setUpClass(cls):
+        import subprocess
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.bc = ch.Blockchain(cls.tmp.name)
+        cls.clock = Clock()
+        cls.t = cls.bc.build_template(Wallet().addr, now=cls.clock())
+        cls.stops = stars.stops(cls.t["prev_hash"])
+        tool = os.path.join(os.path.dirname(__file__), "..", "..", "tools", "make_scouts.py")
+        run = lambda stars_, bits, n, tag: json.loads(subprocess.run(
+            [sys.executable, tool, json.dumps(stars_), str(bits), str(n), tag],
+            capture_output=True, text=True, check=True).stdout)
+        cls.proofs = run(cls.stops, 16, 2, "scoutA")           # real Nebulite escape blocks toward our stops
+        cls.weak = run(cls.stops, 1, 1, "scoutB")[0]           # far too little work
+        cls.other = run([s for s in range(len(stars.CATALOG)) if s not in cls.stops], 16, 1, "scoutC")[0]
+
+    def test_verify(self):
+        v = SC.verify(self.proofs[0])
+        self.assertIn(v["star"], self.stops)
+        self.assertEqual(v["hash"], SC.nebulite_hash(self.proofs[0]))
+        bad = json.loads(json.dumps(self.proofs[0])); bad["nonce"] += 1
+        with self.assertRaises(SC.ScoutError):                 # tampering breaks the proof of work
+            SC.verify(bad)
+        bad = json.loads(json.dumps(self.proofs[0])); bad["trajectory"]["escape"]["vinf_ms"] += 50
+        with self.assertRaises(SC.ScoutError):                 # ... or the physics
+            SC.verify(bad)
+
+    def plan_for(self, scouted):
+        from route_opt import optimise, optimise_plan
+        prob = stars.problem(self.t["prev_hash"])
+        order = [prob[i] for i in optimise([stars.pos(i) for i in prob], seconds=0.4, seed=5)]
+        return optimise_plan(order, work_for(self.t["prev_hash"], scouted), 0.6)
+
+    def test_scouted_stop_is_flown_past(self):
+        v = SC.verify(self.proofs[0])
+        plan = self.plan_for([v["star"]])
+        sc = ch.route_score(self.t["prev_hash"], plan, [v["star"]])
+        self.assertNotIn(v["star"], sc["stops"])
+        unscouted = stars.route_time(plan, self.stops)
+        self.assertLess(sc["mission_time"], unscouted)          # no braking or survey at the scouted star
+        self.assertGreaterEqual(sc["length"], unscouted * C.SCOUT_TIME_CAP_DEN / C.SCOUT_TIME_CAP_NUM - 1)
+
+    def test_block_with_scout_is_accepted_and_scout_cannot_be_reused(self):
+        v = SC.verify(self.proofs[0])
+        tmp = tempfile.TemporaryDirectory()
+        bc = ch.Blockchain(tmp.name)
+        t = bc.build_template(Wallet().addr, now=self.clock(), scouts=[self.proofs[0]])
+        t["route"] = self.plan_for([v["star"]])
+        sc = ch.route_score(t["prev_hash"], t["route"], [v["star"]])
+        prefix = ch.header_prefix(t)
+        target = ch.effective_target(t["target"], sc["length"], sc["baseline"])
+        nonce = 0
+        while int.from_bytes(ch.pow_hash(prefix, nonce), "big") > target:
+            nonce += 1
+        block = dict(t, nonce=nonce)
+        block["hash"] = ch.block_hash(block)
+        bc.add_block(block, now=self.clock())
+        self.assertIn(v["hash"], bc.state.used_scouts)
+        row = bc.route_stats(1)[0]
+        self.assertEqual(row["scouted_ids"], [v["star"]])
+        # the header commits to the scouts: dropping them changes the hash
+        self.assertNotEqual(ch.block_hash(dict(block, scouts=[])), block["hash"])
+        # citing the same Nebulite block again is refused
+        with self.assertRaises(ch.ValidationError):
+            ch.check_scouts(dict(block, prev_hash=block["prev_hash"]), bc.state)
+
+    def test_scout_rules(self):
+        st = ch.State()
+        base = dict(self.t)
+        # work rule: a scout needs at least 1/3 of the work the citing block needs
+        block_target = int(base["target"], 16)
+        self.assertFalse(ch.scout_work_ok(SC.verify(self.weak), block_target))
+        self.assertTrue(ch.scout_work_ok(SC.verify(self.proofs[0]), block_target))
+        with self.assertRaises(ch.ValidationError):            # aimed at a star that isn't one of our stops
+            ch.check_scouts(dict(base, scouts=[self.other]), st)
+        with self.assertRaises(ch.ValidationError):            # at most SCOUT_MAX_PER_BLOCK, and not empty
+            ch.check_scouts(dict(base, scouts=[]), st)
+        if SC.verify(self.proofs[0])["star"] == SC.verify(self.proofs[1])["star"]:
+            with self.assertRaises(ch.ValidationError):        # one scout per survey star
+                ch.check_scouts(dict(base, scouts=self.proofs), st)
+        self.assertEqual(len(ch.check_scouts(dict(base, scouts=[self.proofs[0]]), st)), 1)
+
+    def test_work_with_scouts_via_api(self):
+        import node
+        tmp = tempfile.TemporaryDirectory()
+        node.chain = ch.Blockchain(tmp.name)
+        node.jobs.clear()
+        saved = node.fetch_scouts
+        node.fetch_scouts = lambda prev_hash: self.proofs + [self.weak, self.other]   # as if from a Nebulite node
+        try:
+            client = node.app.test_client()
+            work = client.get(f"/mining/work?address={Wallet().addr}").get_json()
+            self.assertGreaterEqual(len(work["scouted"]), 1)
+            for s in work["scouted"]:
+                self.assertNotIn(s, work["stops"])
+                self.assertIn(s, work["survey_stops"])
+            from route_opt import optimise, optimise_plan
+            pts = [(s["x"], s["y"], s["z"]) for s in work["stars"]]
+            order = [work["stars"][i]["id"] for i in optimise(pts, seconds=0.3, seed=1)]
+            route = optimise_plan(order, work, 0.5)
+            scored = client.post("/mining/route", json={"job_id": work["job_id"], "route": route}).get_json()
+            prefix, target = bytes.fromhex(scored["prefix"]), int(scored["target"], 16)
+            nonce = 0
+            while int.from_bytes(ch.pow_hash(prefix, nonce), "big") > target:
+                nonce += 1
+            r = client.post("/mining/submit", json={"job_id": work["job_id"], "route": route, "nonce": nonce}).get_json()
+            self.assertTrue(r["ok"], r)
+            self.assertEqual(node.chain.route_stats(1)[0]["scouted_ids"], work["scouted"])
+        finally:
+            node.fetch_scouts = saved
 
 
 if __name__ == "__main__":

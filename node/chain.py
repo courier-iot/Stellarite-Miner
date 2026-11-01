@@ -23,6 +23,7 @@ import statistics
 import time
 
 import config as C
+import scouts as SC
 import stars
 from crypto_utils import (address_from_pubkey, canonical, is_valid_address,
                           sha256d, verify)
@@ -105,13 +106,16 @@ def tx_root(txs) -> str:
 
 def header_prefix(block: dict) -> bytes:
     route = ",".join(f"{s}:{v}" for s, v in block["route"])
+    scouted = ""
+    if block.get("scouts"):                     # commits to the cited Nebulite blocks
+        scouted = "S:" + ",".join(SC.nebulite_hash(p) for p in block["scouts"]) + "|"
     return (
         f"{C.COIN_NAME}|{block['height']}|{block['prev_hash']}|{block['timestamp']}|"
-        f"{block['target']}|{block['tx_root']}|{route}|"
+        f"{block['target']}|{block['tx_root']}|{route}|{scouted}"
     ).encode()
 
 
-def route_score(prev_hash: str, route) -> dict:
+def route_score(prev_hash: str, route, scouted=()) -> dict:
     """Check a route plan against the block's star problem and fuel budget, and score it.
 
     A plan is [[star id, cruise speed in % of c], ...]. Raises ValidationError if it
@@ -122,15 +126,21 @@ def route_score(prev_hash: str, route) -> dict:
             or sorted(s for s, _ in route) != problem):
         raise ValidationError("route must visit each of the block's stars exactly once, "
                               "as [star id, cruise speed 1-10] pairs")
-    stop_ids = stars.stops(prev_hash)
+    all_stops = stars.stops(prev_hash)
+    stop_ids = [s for s in all_stops if s not in set(scouted)]    # scouted stops are flown past
     dv = stars.route_dv(route, stop_ids)
     if dv > stars.DV_BUDGET:
         raise ValidationError(f"route needs {dv / stars.PCT:.1f}% of c of speed change; "
                               f"the probe's fuel allows {C.DV_BUDGET_PCT_C}%")
     # "length" and "baseline" are mission times in milli-years (lower is better)
     length = stars.route_time(route, stop_ids)
+    mission_time = length
+    if len(stop_ids) < len(all_stops):
+        # scouts may shorten the scored time by at most SCOUT_TIME_CAP compared with the same plan unscouted
+        unscouted = stars.route_time(route, all_stops)
+        length = max(length, -(-unscouted * C.SCOUT_TIME_CAP_DEN // C.SCOUT_TIME_CAP_NUM))
     baseline = _baseline_time(prev_hash)
-    return {"length": length, "baseline": baseline, "dv": dv}
+    return {"length": length, "baseline": baseline, "dv": dv, "mission_time": mission_time, "stops": stop_ids}
 
 
 @functools.lru_cache(maxsize=256)
@@ -188,6 +198,7 @@ class State:
         self.nonces = {}
         self.names = {}        # NAME -> address
         self.name_of = {}      # address -> NAME
+        self.used_scouts = set()   # Nebulite block hashes already cited as scouts
 
     def copy(self):
         s = State()
@@ -195,6 +206,7 @@ class State:
         s.nonces = dict(self.nonces)
         s.names = dict(self.names)
         s.name_of = dict(self.name_of)
+        s.used_scouts = set(self.used_scouts)
         return s
 
     def name_owner(self, name):
@@ -286,7 +298,7 @@ def validate_block(block: dict, blocks: list, state: State, now=None) -> State:
     now = int(now if now is not None else time.time())
     tip = blocks[-1]
     keys = {"height", "prev_hash", "timestamp", "target", "tx_root", "txs", "route", "nonce", "hash"}
-    if not isinstance(block, dict) or set(block) != keys:
+    if not isinstance(block, dict) or set(block) - {"scouts"} != keys:
         raise ValidationError("block has wrong fields")
     if block["height"] != tip["height"] + 1:
         raise ValidationError("wrong height")
@@ -306,15 +318,50 @@ def validate_block(block: dict, blocks: list, state: State, now=None) -> State:
         raise ValidationError("bad transaction list")
     if block["tx_root"] != tx_root(block["txs"]):
         raise ValidationError("tx_root mismatch")
-    score = route_score(block["prev_hash"], block["route"])
+    scouted = check_scouts(block, state)
+    score = route_score(block["prev_hash"], block["route"], [s["star"] for s in scouted])
     h = block_hash(block)
     if block["hash"] != h:
         raise ValidationError("hash mismatch")
-    if int(h, 16) > effective_target(block["target"], score["length"], score["baseline"]):
+    eff = effective_target(block["target"], score["length"], score["baseline"])
+    if int(h, 16) > eff:
         raise ValidationError("insufficient proof of work for this route")
+    for s_ in scouted:
+        if not scout_work_ok(s_, eff):
+            raise ValidationError(f"the scout of {s_['star_name']} doesn't carry enough proof of work for this block")
     new_state = state.copy()
     new_state.apply_block_txs(block)
+    new_state.used_scouts |= {s["hash"] for s in scouted}
     return new_state
+
+
+def check_scouts(block: dict, state: State) -> list:
+    """Verify a block's cited scouts (see scouts.py); returns their details. Raises ValidationError."""
+    proofs = block.get("scouts")
+    if proofs is None:
+        return []
+    if not isinstance(proofs, list) or not 1 <= len(proofs) <= C.SCOUT_MAX_PER_BLOCK:
+        raise ValidationError(f"scouts must be a list of 1 to {C.SCOUT_MAX_PER_BLOCK} proofs")
+    stops = set(stars.stops(block["prev_hash"]))
+    out = []
+    for p in proofs:
+        try:
+            v = SC.verify(p)
+        except SC.ScoutError as e:
+            raise ValidationError(str(e))
+        if v["star"] not in stops:
+            raise ValidationError(f"scout of {v['star_name']} isn't for one of this block's survey stops")
+        if v["hash"] in state.used_scouts or any(o["hash"] == v["hash"] for o in out):
+            raise ValidationError("that Nebulite scout was already cited")
+        if any(o["star"] == v["star"] for o in out):
+            raise ValidationError("one scout per survey star")
+        out.append(v)
+    return out
+
+
+def scout_work_ok(scout: dict, block_effective_target: int) -> bool:
+    """A scout must carry at least 1/SCOUT_MIN_WORK_DIVISOR of the work the citing block needs."""
+    return scout["effective_target"] <= block_effective_target * C.SCOUT_MIN_WORK_DIVISOR
 
 
 class Blockchain:
@@ -417,7 +464,7 @@ class Blockchain:
                 del self.mempool[tid]
 
     # -- mining --
-    def build_template(self, miner_address, now=None, name=None):
+    def build_template(self, miner_address, now=None, name=None, scouts=None):
         """A block ready to mine except for its nonce. `name` claims a username in the coinbase."""
         if not is_valid_address(miner_address):
             raise ValidationError("bad miner address")
@@ -454,15 +501,36 @@ class Blockchain:
             "route": [],
             "nonce": 0,
         }
+        if scouts:
+            block["scouts"] = list(scouts)
         block["tx_root"] = tx_root(block["txs"])
         block["hash"] = ""
         return block
+
+    def usable_scouts(self, prev_hash, target, candidates, exclude=()):
+        """From candidate proofs (e.g. fetched from a Nebulite node), the best valid, uncited scout for each
+        of this block's survey stops: the one with the most work."""
+        stops = set(stars.stops(prev_hash))
+        best = {}
+        for p in candidates:
+            try:
+                v = SC.verify(p)
+            except SC.ScoutError:
+                continue
+            # the work rule depends on the miner's route; offer scouts that a good route (up to 2x faster
+            # than the baseline, a target 4096x easier) could use, and let /mining/route check
+            if (v["star"] in stops and v["hash"] not in self.state.used_scouts and v["hash"] not in exclude
+                    and v["effective_target"] <= int(target, 16) * C.SCOUT_MIN_WORK_DIVISOR * 4096
+                    and (v["star"] not in best or v["work"] > best[v["star"]][1]["work"])):
+                best[v["star"]] = (p, v)
+        return [best[k][0] for k in sorted(best)][:C.SCOUT_MAX_PER_BLOCK]
 
     def route_stats(self, limit=20):
         """The route map: recent blocks' routes and how much they beat the baseline."""
         out = []
         for b in reversed(self.blocks[1:][-limit:]):
-            sc = route_score(b["prev_hash"], b["route"])
+            cited = [SC.verify(p) for p in b.get("scouts", [])]
+            sc = route_score(b["prev_hash"], b["route"], [c["star"] for c in cited])
             out.append({
                 "height": b["height"], "miner": b["txs"][0]["to"], "timestamp": b["timestamp"],
                 "miner_name": self.state.name_of.get(b["txs"][0]["to"]),
@@ -470,10 +538,13 @@ class Blockchain:
                 "route_ids": [s for s, _ in b["route"]], "speeds_pct_c": [v for _, v in b["route"]],
                 "fuel_used_pct": round(100 * sc["dv"] / stars.DV_BUDGET, 1),
                 "mass_ratio": round(stars.mass_ratio(sc["dv"]), 1),
-                "years": sc["length"] / 1000, "baseline_years": sc["baseline"] / 1000,
-                "length_ly": stars.route_length(b["route"], stars.stops(b["prev_hash"])) / 1000,
-                "stops": [stars.CATALOG[s]["name"] for s in stars.stops(b["prev_hash"])],
-                "stop_ids": stars.stops(b["prev_hash"]),
-                "improvement_pct": round(100 * (1 - sc["length"] / sc["baseline"]), 2),
+                "years": sc["mission_time"] / 1000, "baseline_years": sc["baseline"] / 1000,
+                "length_ly": stars.route_length(b["route"], sc["stops"]) / 1000,
+                "stops": [stars.CATALOG[s]["name"] for s in sc["stops"]],
+                "stop_ids": sc["stops"],
+                "scouted": [c["star_name"] for c in cited], "scouted_ids": [c["star"] for c in cited],
+                "scouts": [{"star": c["star_name"], "nebulite_block": c["hash"], "vinf_kms": round(c["vinf_kms"], 1),
+                            "au_per_year": round(c["au_per_year"], 2)} for c in cited],
+                "improvement_pct": round(100 * (1 - sc["mission_time"] / sc["baseline"]), 2),
             })
         return out
