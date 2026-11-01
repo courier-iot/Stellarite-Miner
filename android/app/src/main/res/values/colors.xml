@@ -1,0 +1,10 @@
+<resources>
+    <color name="black">#030303</color>
+    <color name="panel">#0A0A0A</color>
+    <color name="crimson">#DC143C</color>
+    <color name="crimson_light">#FF4D6A</color>
+    <color name="crimson_dim">#3A0A14</color>
+    <color name="amber">#FBBF24</color>
+    <color name="text">#F2F2F2</color>
+    <color name="muted">#9A9A9A</color>
+</resources>

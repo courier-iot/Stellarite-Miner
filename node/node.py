@@ -1,4 +1,4 @@
-"""Pulsarite full node: HTTP API, mining endpoints and simple peer-to-peer sync.
+"""Pulsarite full node: HTTP API, star-route mining endpoints and simple peer-to-peer sync.
 
 Run:  python node.py --port 5000 --data ./data [--peer http://other-node:5000]
 """
@@ -13,8 +13,9 @@ from collections import OrderedDict
 from flask import Flask, jsonify, request
 
 import config as C
-from chain import (Blockchain, ValidationError, block_hash, header_prefix,
-                   next_target, tx_sender, work)
+import stars
+from chain import (Blockchain, ValidationError, block_hash, effective_target, header_prefix,
+                   next_target, route_score, tx_sender, work)
 
 app = Flask(__name__)
 lock = threading.RLock()
@@ -91,6 +92,8 @@ def info():
             "mempool": len(chain.mempool), "peers": sorted(peers),
             "target_block_seconds": C.TARGET_BLOCK_SECONDS,
             "units_per_coin": C.UNITS_PER_COIN,
+            "catalog_id": stars.CATALOG_ID,
+            "stars_per_block": stars.STARS_PER_PROBLEM,
         })
 
 
@@ -168,14 +171,15 @@ def add_peer():
 
 
 # ---- mining API (used by the Android app and miner.py) ------------------
+#
+# 1. GET  /mining/work?address=...   -> the stars this block must route through
+# 2. POST /mining/route {job_id, route} -> header prefix + effective target for that route
+#    (optimise the route first: shorter routes get an easier target)
+# 3. search nonces: sha256d(prefix + 8-byte big-endian nonce) <= target
+# 4. POST /mining/submit {job_id, route, nonce}
 
 @app.get("/mining/work")
 def mining_work():
-    """Hand a miner the header prefix and target.
-
-    The miner searches for an 8-byte big-endian nonce such that
-    sha256d(prefix + nonce) <= target, then POSTs it to /mining/submit.
-    """
     address = request.args.get("address", "")
     try:
         with lock:
@@ -186,28 +190,64 @@ def mining_work():
                 jobs.popitem(last=False)
     except ValidationError as e:
         return err(str(e))
+    problem = stars.problem(template["prev_hash"])
+    baseline = stars.baseline_route(problem)
     return jsonify({
         "job_id": job_id,
         "height": template["height"],
-        "prefix": header_prefix(template).hex(),
-        "target": template["target"],
+        "stars": [dict(stars.CATALOG[i]) for i in problem],
+        "baseline_route": baseline,
+        "baseline_ly": stars.route_length(baseline) / 1000,
+        "base_target": template["target"],
+        "bonus_exponent": C.ROUTE_BONUS_EXPONENT,
         "reward": template["txs"][0]["amount"],
         "units_per_coin": C.UNITS_PER_COIN,
+    })
+
+
+def _job_block(job_id, route):
+    template = jobs.get(job_id)
+    if template is None:
+        raise LookupError("unknown or expired job")
+    score = route_score(template["prev_hash"], route)
+    block = dict(template, route=list(route))
+    return template, block, score
+
+
+@app.post("/mining/route")
+def mining_route():
+    body = request.get_json(silent=True) or {}
+    with lock:
+        try:
+            _, block, score = _job_block(body.get("job_id"), body.get("route"))
+        except LookupError as e:
+            return err(str(e), 410)
+        except ValidationError as e:
+            return err(str(e))
+    target = effective_target(block["target"], score["length"], score["baseline"])
+    return jsonify({
+        "prefix": header_prefix(block).hex(),
+        "target": format(target, "064x"),
+        "length_ly": score["length"] / 1000,
+        "baseline_ly": score["baseline"] / 1000,
+        "improvement_pct": round(100 * (1 - score["length"] / score["baseline"]), 2),
     })
 
 
 @app.post("/mining/submit")
 def mining_submit():
     body = request.get_json(silent=True) or {}
-    job_id, nonce = body.get("job_id"), body.get("nonce")
     with lock:
-        template = jobs.get(job_id)
-        if template is None:
-            return err("unknown or expired job", 410)
+        try:
+            template, block, _ = _job_block(body.get("job_id"), body.get("route"))
+        except LookupError as e:
+            return err(str(e), 410)
+        except ValidationError as e:
+            return err(str(e))
         if template["prev_hash"] != chain.tip["hash"]:
             return err("stale job: chain moved on", 409)
         try:
-            block = dict(template, nonce=int(nonce))
+            block["nonce"] = int(body.get("nonce"))
             block["hash"] = block_hash(block)
             chain.add_block(block)
         except (ValidationError, ValueError, TypeError, OverflowError) as e:
@@ -216,6 +256,22 @@ def mining_submit():
     print(f"[mined] block {block['height']} {block['hash'][:16]}… -> {block['txs'][0]['to']}")
     broadcast("/blocks", block)
     return jsonify({"ok": True, "height": block["height"], "hash": block["hash"]})
+
+
+# ---- the route map ------------------------------------------------------
+
+@app.get("/routes")
+def routes():
+    """Recent blocks' star routes: the map the network is building."""
+    limit = max(1, min(request.args.get("limit", 20, type=int), 200))
+    with lock:
+        return jsonify(chain.route_stats(limit))
+
+
+@app.get("/stars")
+def star_catalog():
+    return jsonify({"source": stars.CATALOG_SOURCE, "catalog_id": stars.CATALOG_ID,
+                    "count": len(stars.CATALOG), "stars": stars.CATALOG})
 
 
 def main():
@@ -238,7 +294,8 @@ def main():
             except Exception:
                 pass
     threading.Thread(target=sync_loop, daemon=True).start()
-    print(f"{C.COIN_NAME} node on {args.host}:{args.port}, height {chain.tip['height']}")
+    print(f"{C.COIN_NAME} node on {args.host}:{args.port}, height {chain.tip['height']}, "
+          f"star catalog: {stars.CATALOG_SOURCE} ({len(stars.CATALOG)} stars, id {stars.CATALOG_ID})")
     app.run(host=args.host, port=args.port, threaded=True)
 
 

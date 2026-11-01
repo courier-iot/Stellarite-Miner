@@ -1,11 +1,16 @@
-"""The blockchain: blocks, transactions, proof-of-work, difficulty and state.
+"""The blockchain: blocks, transactions, star-route proof-of-work, difficulty and state.
 
 Model
 -----
 * Account-based ledger (balances + per-address nonce), simpler than UTXOs.
-* Proof-of-work: sha256d(header_prefix + nonce as 8 bytes big-endian) <= target.
-  The header prefix is everything except the nonce, so a miner (like the
-  Android app) only needs the prefix bytes and the target to search for nonces.
+* Proof of useful work: every block carries a route through 24 stars picked
+  from the previous block's hash (see stars.py). A block is valid when
+      sha256d(header_prefix + nonce as 8 bytes big-endian) <= effective target
+  where effective target = base target * (baseline / route length)^12.
+  Shorter routes make the hash target exponentially easier, so miners spend
+  effort optimising routes; the hash keeps blocks unpredictable and lets the
+  difficulty adjust. The header prefix includes the route, so a miner only
+  needs the prefix bytes and the effective target to search for nonces.
 * Fork choice: the valid chain with the most cumulative work wins.
 """
 import json
@@ -14,6 +19,7 @@ import statistics
 import time
 
 import config as C
+import stars
 from crypto_utils import (address_from_pubkey, canonical, is_valid_address,
                           sha256d, verify)
 
@@ -67,10 +73,33 @@ def tx_root(txs) -> str:
 
 
 def header_prefix(block: dict) -> bytes:
+    route = ",".join(str(s) for s in block["route"])
     return (
         f"{C.COIN_NAME}|{block['height']}|{block['prev_hash']}|{block['timestamp']}|"
-        f"{block['target']}|{block['tx_root']}|"
+        f"{block['target']}|{block['tx_root']}|{route}|"
     ).encode()
+
+
+def route_score(prev_hash: str, route) -> dict:
+    """Check a route against the block's star problem and score it.
+
+    Raises ValidationError if the route doesn't visit exactly the problem's stars.
+    """
+    problem = stars.problem(prev_hash)
+    if (not isinstance(route, list) or len(route) != len(problem)
+            or any(not isinstance(s, int) or isinstance(s, bool) for s in route)
+            or sorted(route) != problem):
+        raise ValidationError("route must visit each of the block's stars exactly once")
+    length = stars.route_length(route)
+    baseline = stars.route_length(stars.baseline_route(problem))
+    return {"length": length, "baseline": baseline}
+
+
+def effective_target(base_target_hex: str, length: int, baseline: int) -> int:
+    """Base target scaled by (baseline / length)^k: shorter routes are easier to mine."""
+    k = C.ROUTE_BONUS_EXPONENT
+    t = int(base_target_hex, 16) * baseline ** k // max(length, 1) ** k
+    return max(1, min(t, C.MAX_TARGET))
 
 
 def pow_hash(prefix: bytes, nonce: int) -> bytes:
@@ -94,6 +123,7 @@ def make_genesis() -> dict:
         "timestamp": C.GENESIS_TIMESTAMP,
         "target": format(C.GENESIS_TARGET, "064x"),
         "txs": [coinbase],
+        "route": [],
         "nonce": 0,
     }
     block["tx_root"] = tx_root(block["txs"])
@@ -182,7 +212,7 @@ def validate_block(block: dict, blocks: list, state: State, now=None) -> State:
     """Check block against chain `blocks`; return the new state if valid."""
     now = int(now if now is not None else time.time())
     tip = blocks[-1]
-    keys = {"height", "prev_hash", "timestamp", "target", "tx_root", "txs", "nonce", "hash"}
+    keys = {"height", "prev_hash", "timestamp", "target", "tx_root", "txs", "route", "nonce", "hash"}
     if not isinstance(block, dict) or set(block) != keys:
         raise ValidationError("block has wrong fields")
     if block["height"] != tip["height"] + 1:
@@ -203,11 +233,12 @@ def validate_block(block: dict, blocks: list, state: State, now=None) -> State:
         raise ValidationError("bad transaction list")
     if block["tx_root"] != tx_root(block["txs"]):
         raise ValidationError("tx_root mismatch")
+    score = route_score(block["prev_hash"], block["route"])
     h = block_hash(block)
     if block["hash"] != h:
         raise ValidationError("hash mismatch")
-    if int(h, 16) > int(block["target"], 16):
-        raise ValidationError("insufficient proof of work")
+    if int(h, 16) > effective_target(block["target"], score["length"], score["baseline"]):
+        raise ValidationError("insufficient proof of work for this route")
     new_state = state.copy()
     new_state.apply_block_txs(block)
     return new_state
@@ -330,8 +361,22 @@ class Blockchain:
             "timestamp": max(now, median_time_past(self.blocks) + 1),
             "target": next_target(self.blocks),
             "txs": [coinbase] + chosen,
+            "route": [],
             "nonce": 0,
         }
         block["tx_root"] = tx_root(block["txs"])
         block["hash"] = ""
         return block
+
+    def route_stats(self, limit=20):
+        """The route map: recent blocks' routes and how much they beat the baseline."""
+        out = []
+        for b in reversed(self.blocks[1:][-limit:]):
+            sc = route_score(b["prev_hash"], b["route"])
+            out.append({
+                "height": b["height"], "miner": b["txs"][0]["to"], "timestamp": b["timestamp"],
+                "route": [stars.CATALOG[s]["name"] for s in b["route"]],
+                "length_ly": sc["length"] / 1000, "baseline_ly": sc["baseline"] / 1000,
+                "improvement_pct": round(100 * (1 - sc["length"] / sc["baseline"]), 2),
+            })
+        return out

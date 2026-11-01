@@ -25,5 +25,11 @@ GENESIS_DIFFICULTY_BITS = int(os.environ.get("PULSARITE_DIFFICULTY_BITS", "20"))
 MAX_TARGET = (1 << 256) - 1
 GENESIS_TARGET = MAX_TARGET >> GENESIS_DIFFICULTY_BITS
 
+# Star-route proof of work: each block carries a route through stars chosen from
+# the previous block's hash. A route R times shorter than the greedy baseline
+# makes the block's hash target R^ROUTE_BONUS_EXPONENT times easier to hit, so
+# better routes win blocks. See stars.py and README "Useful work".
+ROUTE_BONUS_EXPONENT = 12
+
 GENESIS_TIMESTAMP = 1_790_812_800  # 2026-10-01 00:00 UTC
 GENESIS_MESSAGE = "Pulsarite genesis - built for learning"

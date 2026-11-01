@@ -1,6 +1,9 @@
 """Reference CPU miner (Python). Does the same thing as the Android app.
 
   python miner.py --node http://127.0.0.1:5000 --address plsr...
+
+Each round: fetch the block's 24 stars, optimise a route through them (useful
+work), ask the node for the route's header and target, then search nonces.
 """
 import argparse
 import hashlib
@@ -10,7 +13,10 @@ import time
 import urllib.error
 import urllib.request
 
-REFRESH_SECONDS = 10  # fetch fresh work this often so we notice new blocks
+from route_opt import optimise
+
+REFRESH_SECONDS = 10   # fetch fresh work this often so we notice new blocks
+ROUTE_SECONDS = 2      # time spent optimising each block's route
 
 
 def call(url, payload=None):
@@ -32,7 +38,7 @@ def search(prefix: bytes, target: int, start: int, deadline: float):
             h = sha(sha(prefix + nonce.to_bytes(8, "big")).digest()).digest()
             if int.from_bytes(h, "big") <= target:
                 return nonce, nonce - start + 1
-            nonce = (nonce + 1) % (1 << 64)
+            nonce = (nonce + 1) % (1 << 63)
         if time.time() > deadline:
             return None, nonce - start
 
@@ -42,6 +48,7 @@ def main():
     ap.add_argument("--node", default="http://127.0.0.1:5000")
     ap.add_argument("--address", required=True)
     ap.add_argument("--blocks", type=int, default=0, help="stop after N blocks (0 = forever)")
+    ap.add_argument("--route-seconds", type=float, default=ROUTE_SECONDS)
     args = ap.parse_args()
     node = args.node.rstrip("/")
     found = 0
@@ -49,18 +56,27 @@ def main():
         work = call(f"{node}/mining/work?address={args.address}")
         if "job_id" not in work:
             raise SystemExit(f"Node refused work: {work}")
-        prefix, target = bytes.fromhex(work["prefix"]), int(work["target"], 16)
+        pts = [(s["x"], s["y"], s["z"]) for s in work["stars"]]
+        order = optimise(pts, seconds=args.route_seconds)
+        route = [work["stars"][i]["id"] for i in order]
+        scored = call(f"{node}/mining/route", {"job_id": work["job_id"], "route": route})
+        if "prefix" not in scored:
+            print("Route refused:", scored.get("error"))
+            continue
+        prefix, target = bytes.fromhex(scored["prefix"]), int(scored["target"], 16)
         t0 = time.time()
-        nonce, tried = search(prefix, target, int.from_bytes(os.urandom(8), "big") >> 1,
+        nonce, tried = search(prefix, target, int.from_bytes(os.urandom(8), "big") >> 2,
                               t0 + REFRESH_SECONDS)
         rate = tried / max(time.time() - t0, 1e-6)
+        route_txt = (f"route {scored['length_ly']:.1f} ly vs baseline {scored['baseline_ly']:.1f} ly "
+                     f"({scored['improvement_pct']:+.1f}% shorter)")
         if nonce is None:
-            print(f"height {work['height']}: {rate/1000:.0f} kH/s, refreshing work")
+            print(f"height {work['height']}: {route_txt}, {rate/1000:.0f} kH/s, refreshing")
             continue
-        r = call(f"{node}/mining/submit", {"job_id": work["job_id"], "nonce": nonce})
+        r = call(f"{node}/mining/submit", {"job_id": work["job_id"], "route": route, "nonce": nonce})
         if r.get("ok"):
             found += 1
-            print(f"Found block {r['height']} ({rate/1000:.0f} kH/s) reward "
+            print(f"Found block {r['height']}: {route_txt}, reward "
                   f"{work['reward'] / work['units_per_coin']}")
         else:
             print("Submit rejected:", r.get("error"))

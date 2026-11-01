@@ -1,0 +1,54 @@
+package com.example.stellariteminer
+
+/** How the app reaches the network for a coin. */
+enum class Protocol { NODE, STRATUM }
+
+/**
+ * A coin the app can mine. Every coin here uses SHA-256d hashing (Pulsarite adds
+ * star-route useful work on top); adding a CPU-friendly algorithm (e.g. RandomX for Monero)
+ * would mean adding a new hashing engine.
+ */
+class CoinProfile(
+    val id: String,
+    val name: String,
+    val ticker: String,
+    val protocol: Protocol,
+    val urlHint: String,
+    val userLabel: String,
+    val userHint: String,
+    val note: String,
+) {
+    companion object {
+        val ALL = listOf(
+            CoinProfile(
+                id = "plsr", name = "Pulsarite", ticker = Coin.TICKER, protocol = Protocol.NODE,
+                urlHint = "http://192.168.1.10:5000",
+                userLabel = "WALLET_ADDR", userHint = "${Coin.ADDRESS_PREFIX}…",
+                note = "Mines your own coin through your node. Every block needs a route through 24 nearby " +
+                    "stars: the rig keeps shortening it while it hashes, and shorter routes make " +
+                    "blocks easier to win. Blocks pay straight to your address.",
+            ),
+            CoinProfile(
+                id = "btc", name = "Bitcoin", ticker = "BTC", protocol = Protocol.STRATUM,
+                urlHint = "stratum+tcp://pool.example.com:3333",
+                userLabel = "WORKER", userHint = "bc1q…yourAddress.phone",
+                note = "Bitcoin is secured by industrial ASIC farms. A phone can earn pool shares " +
+                    "but expect effectively zero BTC. Pick a pool that allows very low difficulty.",
+            ),
+            CoinProfile(
+                id = "bch", name = "Bitcoin Cash", ticker = "BCH", protocol = Protocol.STRATUM,
+                urlHint = "stratum+tcp://pool.example.com:3333",
+                userLabel = "WORKER", userHint = "bitcoincash:q…yourAddress.phone",
+                note = "Same SHA-256d algorithm as Bitcoin, so the same expectations apply.",
+            ),
+            CoinProfile(
+                id = "custom", name = "Custom SHA-256d", ticker = "SHA", protocol = Protocol.STRATUM,
+                urlHint = "stratum+tcp://host:port",
+                userLabel = "WORKER", userHint = "username.worker",
+                note = "Any Stratum v1 pool for a SHA-256d coin. Password field is passed to the pool as-is.",
+            ),
+        )
+
+        fun byId(id: String) = ALL.firstOrNull { it.id == id } ?: ALL[0]
+    }
+}

@@ -23,20 +23,27 @@ import java.util.concurrent.TimeUnit
 /** Snapshot of miner state, read by the UI. */
 data class MinerStatus(
     val running: Boolean = false,
+    val coinName: String = "",
+    val ticker: String = Coin.TICKER,
+    val unit: String = "blocks",
     val pausedReason: String? = null,
     val hashrate: Double = 0.0,
-    val height: Long = 0,
+    val height: Long = -1,
     val accepted: Int = 0,
     val rejected: Int = 0,
     val earnedUnits: Long = 0,
     val unitsPerCoin: Long = 100_000_000,
-    val message: String = "Idle",
+    val message: String = "RIG_IDLE",
+    val startedAt: Long = 0,
+    val route: RouteInfo? = null,      // route of the job being hashed (Pulsarite)
+    val bestGainPct: Double = 0.0,     // best route improvement among accepted blocks
 )
 
 /**
  * Foreground service that owns the mining threads. It is only ever started by the
- * user tapping Start, shows a persistent notification with a Stop action, and
- * pauses itself on low battery, overheating, or (optionally) when unplugged.
+ * user tapping Engage, shows a persistent notification with a Stop action, pauses
+ * itself on low battery, overheating, or (optionally) when unplugged, and records
+ * every session in the [Ledger].
  */
 class MinerService : Service() {
 
@@ -46,6 +53,7 @@ class MinerService : Service() {
         private const val CHANNEL_ID = "mining"
         private const val NOTIFICATION_ID = 1
         private const val WORK_REFRESH_MS = 10_000L
+        private const val LEDGER_SAVE_MS = 30_000L
         private const val MIN_BATTERY_PERCENT = 20
 
         @Volatile var status = MinerStatus()
@@ -53,9 +61,12 @@ class MinerService : Service() {
     }
 
     private var engine: MiningEngine? = null
+    private var backend: PoolBackend? = null
     private var controller: Thread? = null
     private var wakeLock: PowerManager.WakeLock? = null
     @Volatile private var running = false
+    @Volatile private var sessionStart = 0L
+    @Volatile private var sessionCoin = ""
     private val found = LinkedBlockingQueue<Pair<Job, Long>>()
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -77,8 +88,9 @@ class MinerService : Service() {
     private fun startMining() {
         if (running) return
         val prefs = Prefs(this)
+        val coin = prefs.coin
         createChannel()
-        val notification = buildNotification("Starting…")
+        val notification = buildNotification("Connecting…")
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
@@ -95,34 +107,53 @@ class MinerService : Service() {
                 r.run()
             }
         }
+        found.clear()
         val eng = MiningEngine(prefs.threads, lowPriority) { job, nonce -> found.offer(job to nonce) }
+        val be = prefs.backend()
         engine = eng
+        backend = be
         running = true
-        status = MinerStatus(running = true, message = "Connecting to node…")
+        sessionStart = System.currentTimeMillis()
+        sessionCoin = coin.id
+        status = MinerStatus(running = true, coinName = coin.name, ticker = coin.ticker,
+            unit = be.unitName, message = "LINKING_${coin.ticker}", startedAt = sessionStart)
         eng.start()
-        controller = Thread({ controlLoop(eng, NodeClient(prefs.nodeUrl), prefs) }, "miner-control")
-            .apply { start() }
+        controller = Thread({ controlLoop(eng, be, prefs) }, "miner-control").apply { start() }
     }
 
     private fun stopMining() {
         if (!running && engine == null) return
         running = false
         controller?.interrupt()
+        engine?.let { saveSession(it) }
         engine?.stop()
         engine = null
+        Thread { backend?.close(); backend = null }.start()  // closing a socket must stay off the main thread
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
-        status = status.copy(running = false, hashrate = 0.0, pausedReason = null, message = "Stopped")
+        status = status.copy(running = false, hashrate = 0.0, pausedReason = null, message = "RIG_IDLE")
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
-    /** Fetches work, submits solutions, measures hashrate, and enforces safety pauses. */
-    private fun controlLoop(eng: MiningEngine, node: NodeClient, prefs: Prefs) {
+    private fun saveSession(eng: MiningEngine) {
+        val s = status
+        if (sessionStart == 0L) return
+        Ledger.get(filesDir).upsert(Session(
+            start = sessionStart, end = System.currentTimeMillis(), coinId = sessionCoin,
+            ticker = s.ticker, unit = s.unit, hashes = eng.hashes.get(), accepted = s.accepted,
+            rejected = s.rejected, earnedUnits = s.earnedUnits, unitsPerCoin = s.unitsPerCoin,
+            bestGainPct = s.bestGainPct,
+        ))
+    }
+
+    /** Fetches work, submits solutions, measures hashrate, saves progress, enforces safety pauses. */
+    private fun controlLoop(eng: MiningEngine, node: PoolBackend, prefs: Prefs) {
         var lastFetch = 0L
         var lastHashes = 0L
         var lastTick = System.nanoTime()
         var rate = 0.0
         var lastNotify = 0L
+        var lastSave = System.currentTimeMillis()
 
         while (running) {
             val reason = pauseReason(prefs.chargingOnly)
@@ -133,26 +164,29 @@ class MinerService : Service() {
                 if (!running) break
                 if (solution != null) {
                     val (job, nonce) = solution
-                    val result = node.submit(job.id, nonce)
+                    val result = node.submit(job, nonce)
                     status = if (result.accepted) status.copy(
                         accepted = status.accepted + 1,
                         earnedUnits = status.earnedUnits + job.rewardUnits,
-                        message = "${result.message} 🎉",
-                    ) else status.copy(rejected = status.rejected + 1, message = "Rejected: ${result.message}")
-                    lastFetch = 0  // get fresh work right away
+                        bestGainPct = maxOf(status.bestGainPct, job.route?.improvementPct ?: 0.0),
+                        message = result.message.uppercase(Locale.US).replace(' ', '_'),
+                    ) else status.copy(rejected = status.rejected + 1, message = "REJECTED: ${result.message}")
+                    if (job.nonceSize == 8) lastFetch = 0  // own node: that job is spent, get the next block
                 }
                 val now = System.currentTimeMillis()
-                if (reason == null && (eng.job == null || now - lastFetch > WORK_REFRESH_MS)) {
-                    val job = node.getWork(prefs.address)
+                val needWork = eng.job == null || node.hasNewWork() || eng.exhausted === eng.job ||
+                    now - lastFetch > WORK_REFRESH_MS
+                if (reason == null && needWork) {
+                    val job = node.getWork()
                     eng.job = job
                     lastFetch = now
-                    status = status.copy(height = job.height, unitsPerCoin = job.unitsPerCoin,
-                        message = if (solution == null) "Mining block ${job.height}" else status.message)
+                    status = status.copy(height = job.height, unitsPerCoin = job.unitsPerCoin, route = job.route,
+                        message = if (solution == null) "MINING_ACTIVE" else status.message)
                 }
             } catch (e: InterruptedException) {
                 break
             } catch (e: Exception) {
-                status = status.copy(message = "Node error: ${e.message ?: e.javaClass.simpleName}")
+                status = status.copy(message = "LINK_ERROR: ${e.message ?: e.javaClass.simpleName}")
                 eng.job = null
                 try { Thread.sleep(5000) } catch (ie: InterruptedException) { break }
             }
@@ -168,10 +202,15 @@ class MinerService : Service() {
             lastHashes = total; lastTick = t
             status = status.copy(hashrate = if (reason != null) 0.0 else rate, pausedReason = reason)
 
-            if (System.currentTimeMillis() - lastNotify > 5000) {
-                lastNotify = System.currentTimeMillis()
+            val now = System.currentTimeMillis()
+            if (now - lastSave > LEDGER_SAVE_MS) {
+                lastSave = now
+                saveSession(eng)
+            }
+            if (now - lastNotify > 5000) {
+                lastNotify = now
                 val text = reason?.let { "Paused: $it" }
-                    ?: "${formatRate(rate)} · ${status.accepted} blocks found"
+                    ?: "${status.ticker} · ${formatRate(rate)} · ${status.accepted} ${status.unit}"
                 getSystemService(NotificationManager::class.java)
                     .notify(NOTIFICATION_ID, buildNotification(text))
             }
@@ -187,10 +226,10 @@ class MinerService : Service() {
 
         if (Build.VERSION.SDK_INT >= 29) {
             val pm = getSystemService(PowerManager::class.java)
-            if (pm.currentThermalStatus >= PowerManager.THERMAL_STATUS_SEVERE) return "phone is too hot"
+            if (pm.currentThermalStatus >= PowerManager.THERMAL_STATUS_SEVERE) return "THERMAL_LIMIT"
         }
-        if (chargingOnly && !plugged) return "not charging"
-        if (!plugged && percent < MIN_BATTERY_PERCENT) return "battery below $MIN_BATTERY_PERCENT%"
+        if (chargingOnly && !plugged) return "NOT_CHARGING"
+        if (!plugged && percent < MIN_BATTERY_PERCENT) return "BATTERY_LOW"
         return null
     }
 
@@ -207,6 +246,7 @@ class MinerService : Service() {
             Intent(this, MinerService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE)
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_miner)
+            .setColor(Theme.CRIMSON)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(text)
             .setOngoing(true)
@@ -218,6 +258,7 @@ class MinerService : Service() {
 }
 
 fun formatRate(hashesPerSecond: Double): String = when {
+    hashesPerSecond >= 1e9 -> String.format(Locale.US, "%.2f GH/s", hashesPerSecond / 1e9)
     hashesPerSecond >= 1e6 -> String.format(Locale.US, "%.2f MH/s", hashesPerSecond / 1e6)
     hashesPerSecond >= 1e3 -> String.format(Locale.US, "%.1f kH/s", hashesPerSecond / 1e3)
     else -> String.format(Locale.US, "%.0f H/s", hashesPerSecond)

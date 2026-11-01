@@ -1,11 +1,8 @@
 <resources>
     <string name="app_name">Stellarite Miner</string>
-    <string name="node_url">Node URL</string>
-    <string name="address">Your Pulsarite address (rewards go here)</string>
-    <string name="threads">CPU threads</string>
-    <string name="charging_only">Only mine while charging</string>
-    <string name="test">Test connection</string>
-    <string name="start">Start mining</string>
-    <string name="stop">Stop mining</string>
+    <string name="start">ENGAGE RIG</string>
+    <string name="stop">DISENGAGE</string>
     <string name="channel_name">Mining status</string>
+    <string name="tab_rig">RIG</string>
+    <string name="tab_ledger">LEDGER</string>
 </resources>

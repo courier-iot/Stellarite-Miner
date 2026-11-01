@@ -1,45 +1,77 @@
 package com.example.stellariteminer
 
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-/** A unit of work from the node: find a nonce so sha256d(prefix + nonce) <= target. */
-class Job(
-    val id: String,
-    val height: Long,
-    val prefix: ByteArray,
-    val target: ByteArray,   // 32 bytes, big-endian
-    val rewardUnits: Long,
-    val unitsPerCoin: Long,
-)
-
-class SubmitResult(val accepted: Boolean, val message: String)
-
-/** Talks to the Pulsarite node's HTTP API. Blocking calls: run off the main thread. */
-class NodeClient(baseUrl: String) {
+/**
+ * Talks to the Pulsarite node's HTTP API. Blocking calls: run off the main thread.
+ *
+ * Mining a Pulsarite block has two halves:
+ *  1. useful work: optimise a route through the block's 24 stars (RouteOptimizer);
+ *     the node turns that route into a header and a target, easier for shorter routes
+ *  2. hashing: search nonces against that target (MiningEngine)
+ * Each time fresh work is fetched for the same block, the optimiser keeps improving
+ * the route it already has, so the target keeps getting easier.
+ */
+class NodeClient(baseUrl: String, private val address: String = "") : PoolBackend {
+    override val unitName = "blocks"
     private val base = baseUrl.trim().trimEnd('/')
+
+    // One optimiser per star problem, so improvement carries over between refreshes.
+    private var problemKey = ""
+    private var optimizer: RouteOptimizer? = null
 
     fun info(): JSONObject = request("GET", "/info", null).second
 
-    fun getWork(address: String): Job {
-        val (code, body) = request("GET", "/mining/work?address=" + URLEncoder.encode(address, "UTF-8"), null)
-        if (code != 200) throw IOException(body.optString("error", "HTTP $code"))
+    override fun getWork(): Job {
+        val (code, work) = request("GET", "/mining/work?address=" + URLEncoder.encode(address, "UTF-8"), null)
+        if (code != 200) throw IOException(work.optString("error", "HTTP $code"))
+        val jobId = work.getString("job_id")
+        val stars = work.getJSONArray("stars")
+        val n = stars.length()
+        val ids = IntArray(n) { stars.getJSONObject(it).getInt("id") }
+
+        // 1. Useful work: route through this block's stars.
+        val key = ids.joinToString(",")
+        val fresh = key != problemKey || optimizer == null
+        if (fresh) {
+            optimizer = RouteOptimizer(
+                DoubleArray(n) { stars.getJSONObject(it).getDouble("x") },
+                DoubleArray(n) { stars.getJSONObject(it).getDouble("y") },
+                DoubleArray(n) { stars.getJSONObject(it).getDouble("z") },
+            )
+            problemKey = key
+        }
+        val opt = optimizer!!
+        opt.improve(if (fresh) FIRST_ROUTE_MS else REFINE_ROUTE_MS)
+        val route = opt.best.map { ids[it] }
+
+        // 2. The node scores the route and gives us the header to hash.
+        val (rc, scored) = request("POST", "/mining/route",
+            JSONObject().put("job_id", jobId).put("route", JSONArray(route)))
+        if (rc != 200) throw IOException(scored.optString("error", "HTTP $rc"))
         return Job(
-            id = body.getString("job_id"),
-            height = body.getLong("height"),
-            prefix = hexToBytes(body.getString("prefix")),
-            target = hexToBytes(body.getString("target")),
-            rewardUnits = body.getLong("reward"),
-            unitsPerCoin = body.getLong("units_per_coin"),
+            id = jobId,
+            height = work.getLong("height"),
+            prefix = hexToBytes(scored.getString("prefix")),
+            target = hexToBytes(scored.getString("target")),
+            nonceSize = 8,
+            littleEndian = false,
+            rewardUnits = work.getLong("reward"),
+            unitsPerCoin = work.getLong("units_per_coin"),
+            route = RouteInfo(route, scored.getDouble("length_ly"), scored.getDouble("baseline_ly"),
+                scored.getDouble("improvement_pct")),
         )
     }
 
     /** [nonce] is kept in 0..Long.MAX_VALUE so it survives JSON as a plain number. */
-    fun submit(jobId: String, nonce: Long): SubmitResult {
-        val payload = JSONObject().put("job_id", jobId).put("nonce", nonce)
+    override fun submit(job: Job, nonce: Long): SubmitResult {
+        val route = JSONArray(job.route?.starIds ?: emptyList<Int>())
+        val payload = JSONObject().put("job_id", job.id).put("route", route).put("nonce", nonce)
         val (code, body) = request("POST", "/mining/submit", payload)
         return if (code == 200 && body.optBoolean("ok")) {
             SubmitResult(true, "Block ${body.optLong("height")} accepted")
@@ -47,6 +79,9 @@ class NodeClient(baseUrl: String) {
             SubmitResult(false, body.optString("error", "HTTP $code"))
         }
     }
+
+    override fun hasNewWork() = false
+    override fun close() {}
 
     private fun request(method: String, path: String, payload: JSONObject?): Pair<Int, JSONObject> {
         val conn = URL(base + path).openConnection() as HttpURLConnection
@@ -71,6 +106,9 @@ class NodeClient(baseUrl: String) {
     }
 
     companion object {
+        private const val FIRST_ROUTE_MS = 2500L   // optimise a new block's route this long
+        private const val REFINE_ROUTE_MS = 1000L  // then keep refining on each refresh
+
         fun hexToBytes(hex: String): ByteArray {
             require(hex.length % 2 == 0) { "odd-length hex" }
             return ByteArray(hex.length / 2) { i ->

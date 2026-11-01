@@ -10,12 +10,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import config as C  # noqa: E402
 import chain as ch  # noqa: E402
+import stars  # noqa: E402
+from route_opt import optimise  # noqa: E402
 from crypto_utils import (address_from_pubkey, is_valid_address, new_private_key,  # noqa: E402
                           public_key_hex, sign)
 
 
-def mine(template):
-    prefix, target = ch.header_prefix(template), int(template["target"], 16)
+def mine(template, route=None):
+    """Mine a template; uses the greedy baseline route unless one is given."""
+    template = dict(template)
+    template["route"] = route or stars.baseline_route(stars.problem(template["prev_hash"]))
+    sc = ch.route_score(template["prev_hash"], template["route"])
+    prefix = ch.header_prefix(template)
+    target = ch.effective_target(template["target"], sc["length"], sc["baseline"])
     nonce = 0
     while int.from_bytes(ch.pow_hash(prefix, nonce), "big") > target:
         nonce += 1
@@ -102,7 +109,7 @@ class ChainTests(unittest.TestCase):
         now = self.clock()
         t = self.bc.build_template(self.alice.addr, now=now)
         t["target"] = format(1, "064x")  # claim an impossible target
-        block = dict(t, nonce=0)
+        block = dict(t, nonce=0, route=stars.baseline_route(stars.problem(t["prev_hash"])))
         block["hash"] = ch.block_hash(block)
         with self.assertRaises(ch.ValidationError):
             self.bc.add_block(block, now=now)
@@ -134,6 +141,43 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(self.bc.state.balance(self.alice.addr), 0)
         self.assertFalse(self.bc.replace_chain(other.blocks[:2]))
 
+    def test_route_must_cover_the_blocks_stars(self):
+        now = self.clock()
+        t = self.bc.build_template(self.alice.addr, now=now)
+        problem = stars.problem(t["prev_hash"])
+        for bad in (problem[:-1], problem[:-1] + problem[:1],
+                    problem[:-1] + [next(i for i in range(len(stars.CATALOG)) if i not in problem)]):
+            with self.assertRaises(ch.ValidationError):
+                ch.route_score(t["prev_hash"], bad)
+
+    def test_route_is_bound_into_the_hash(self):
+        now = self.clock()
+        block = mine(self.bc.build_template(self.alice.addr, now=now))
+        swapped = block["route"][:]
+        swapped[0], swapped[1] = swapped[1], swapped[0]
+        with self.assertRaises(ch.ValidationError):
+            self.bc.add_block(dict(block, route=swapped), now=now)
+
+    def test_shorter_routes_get_easier_targets(self):
+        t = self.bc.build_template(self.alice.addr, now=self.clock())
+        problem = stars.problem(t["prev_hash"])
+        pts = [stars.pos(i) for i in problem]
+        best = [problem[i] for i in optimise(pts, seconds=0.5, seed=3)]
+        sc_base = ch.route_score(t["prev_hash"], stars.baseline_route(problem))
+        sc_best = ch.route_score(t["prev_hash"], best)
+        self.assertLess(sc_best["length"], sc_base["length"])
+        easy = ch.effective_target(t["target"], sc_best["length"], sc_best["baseline"])
+        self.assertGreater(easy, int(t["target"], 16))
+        self.assertEqual(ch.effective_target(t["target"], sc_base["length"], sc_base["baseline"]),
+                         int(t["target"], 16))
+        self.bc.add_block(mine(t, best), now=self.clock() - 1)  # an optimised route is accepted
+
+    def test_problems_change_every_block(self):
+        a = mine_next(self.bc, self.alice.addr, self.clock)
+        b = mine_next(self.bc, self.alice.addr, self.clock)
+        self.assertNotEqual(sorted(a["route"]), sorted(b["route"]))
+        self.assertEqual(len(a["route"]), stars.STARS_PER_PROBLEM)
+
     def test_persistence(self):
         with tempfile.TemporaryDirectory() as d:
             bc = ch.Blockchain(d)
@@ -152,13 +196,17 @@ class ApiTests(unittest.TestCase):
         self.client = node.app.test_client()
         self.alice, self.bob = Wallet(), Wallet()
 
-    def mine_via_api(self, addr):
+    def mine_via_api(self, addr, optimise_seconds=0.2):
         work = self.client.get(f"/mining/work?address={addr}").get_json()
-        prefix, target = bytes.fromhex(work["prefix"]), int(work["target"], 16)
+        pts = [(s["x"], s["y"], s["z"]) for s in work["stars"]]
+        route = [work["stars"][i]["id"] for i in optimise(pts, seconds=optimise_seconds, seed=1)]
+        scored = self.client.post("/mining/route", json={"job_id": work["job_id"], "route": route}).get_json()
+        prefix, target = bytes.fromhex(scored["prefix"]), int(scored["target"], 16)
         nonce = 0
         while int.from_bytes(ch.pow_hash(prefix, nonce), "big") > target:
             nonce += 1
-        return self.client.post("/mining/submit", json={"job_id": work["job_id"], "nonce": nonce})
+        return self.client.post("/mining/submit",
+                                json={"job_id": work["job_id"], "route": route, "nonce": nonce})
 
     def test_full_flow(self):
         r = self.mine_via_api(self.alice.addr)
@@ -178,8 +226,21 @@ class ApiTests(unittest.TestCase):
     def test_stale_job_rejected(self):
         old = self.client.get(f"/mining/work?address={self.alice.addr}").get_json()
         self.mine_via_api(self.alice.addr)
-        r = self.client.post("/mining/submit", json={"job_id": old["job_id"], "nonce": 0})
+        route = stars.baseline_route([st["id"] for st in old["stars"]])
+        r = self.client.post("/mining/submit", json={"job_id": old["job_id"], "route": route, "nonce": 0})
         self.assertIn(r.status_code, (409, 410))
+
+    def test_route_map(self):
+        self.mine_via_api(self.alice.addr)
+        rows = self.client.get("/routes").get_json()
+        self.assertEqual(len(rows), 1)
+        self.assertGreater(rows[0]["improvement_pct"], 0)
+        self.assertEqual(len(rows[0]["route"]), stars.STARS_PER_PROBLEM)
+
+    def test_bad_route_refused(self):
+        work = self.client.get(f"/mining/work?address={self.alice.addr}").get_json()
+        r = self.client.post("/mining/route", json={"job_id": work["job_id"], "route": [0, 1, 2]})
+        self.assertEqual(r.status_code, 400)
 
     def test_bad_address_refused(self):
         r = self.client.get("/mining/work?address=nope")

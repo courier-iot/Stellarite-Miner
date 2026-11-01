@@ -1,108 +1,486 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@color/black"
     android:fitsSystemWindows="true">
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="20dp">
+        android:layout_height="match_parent"
+        android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/hashrate"
+        <!-- Header -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center"
-            android:text="0 H/s"
-            android:textSize="40sp"
-            android:textStyle="bold" />
+            android:gravity="bottom"
+            android:orientation="horizontal"
+            android:paddingStart="22dp"
+            android:paddingTop="18dp"
+            android:paddingEnd="22dp"
+            android:paddingBottom="12dp">
 
-        <TextView
-            android:id="@+id/state"
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:letterSpacing="0.3"
+                    android:text="// STELLARITE CORP"
+                    android:textColor="@color/amber"
+                    android:textSize="10sp" />
+
+                <TextView
+                    android:id="@+id/title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:letterSpacing="0.08"
+                    android:tag="heavy"
+                    android:text="PULSAR_RIG"
+                    android:textColor="@color/crimson_light"
+                    android:textSize="22sp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/sysStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="end"
+                android:lineSpacingExtra="2dp"
+                android:text="SYS.OK\nLINK —"
+                android:textColor="@color/muted"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <View
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:text="Idle"
-            android:textSize="16sp" />
+            android:layout_height="1dp"
+            android:background="@color/crimson_dim" />
 
-        <TextView
-            android:id="@+id/stats"
+        <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:layout_marginBottom="20dp"
-            android:gravity="center"
-            android:textSize="14sp" />
+            android:layout_height="0dp"
+            android:layout_weight="1">
 
-        <Button
-            android:id="@+id/toggle"
+            <!-- RIG page -->
+            <ScrollView
+                android:id="@+id/rigPage"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingStart="22dp"
+                    android:paddingTop="16dp"
+                    android:paddingEnd="22dp"
+                    android:paddingBottom="24dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:letterSpacing="0.15"
+                        android:text="TARGET_COIN"
+                        android:textColor="@color/muted"
+                        android:textSize="11sp" />
+
+                    <HorizontalScrollView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:scrollbars="none">
+
+                        <LinearLayout
+                            android:id="@+id/coinChips"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal" />
+                    </HorizontalScrollView>
+
+                    <com.example.stellariteminer.HudFrame
+                        android:layout_width="match_parent"
+                        android:layout_height="230dp"
+                        android:layout_marginTop="16dp">
+
+                        <com.example.stellariteminer.PulseRingView
+                            android:id="@+id/rings"
+                            android:layout_width="210dp"
+                            android:layout_height="210dp"
+                            android:layout_gravity="center" />
+
+                        <LinearLayout
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center"
+                            android:gravity="center_horizontal"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:letterSpacing="0.3"
+                                android:text="HASH/SEC"
+                                android:textColor="@color/muted"
+                                android:textSize="11sp" />
+
+                            <TextView
+                                android:id="@+id/hashrate"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:tag="display"
+                                android:text="000.0"
+                                android:textColor="@color/text"
+                                android:textSize="40sp" />
+
+                            <TextView
+                                android:id="@+id/hashUnit"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:letterSpacing="0.2"
+                                android:text="kH/s"
+                                android:textColor="@color/crimson_light"
+                                android:textSize="14sp" />
+                        </LinearLayout>
+                    </com.example.stellariteminer.HudFrame>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/state"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:ellipsize="end"
+                            android:letterSpacing="0.1"
+                            android:maxLines="2"
+                            android:text="&gt; RIG_IDLE"
+                            android:textColor="@color/amber"
+                            android:textSize="12sp" />
+
+                        <TextView
+                            android:id="@+id/block"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:letterSpacing="0.1"
+                            android:text="BLK#—"
+                            android:textColor="@color/amber"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/route"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:letterSpacing="0.08"
+                        android:textColor="@color/crimson_light"
+                        android:textSize="12sp"
+                        android:visibility="gone" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:orientation="horizontal">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:background="@drawable/cell_bg"
+                            android:orientation="vertical"
+                            android:padding="12dp">
+
+                            <TextView
+                                android:id="@+id/foundLabel"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:letterSpacing="0.15"
+                                android:text="BLOCKS"
+                                android:textColor="@color/muted"
+                                android:textSize="10sp" />
+
+                            <TextView
+                                android:id="@+id/found"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="6dp"
+                                android:tag="display"
+                                android:text="00"
+                                android:textColor="@color/text"
+                                android:textSize="20sp" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="-1dp"
+                            android:layout_weight="1"
+                            android:background="@drawable/cell_bg"
+                            android:orientation="vertical"
+                            android:padding="12dp">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:letterSpacing="0.15"
+                                android:text="REJECT"
+                                android:textColor="@color/muted"
+                                android:textSize="10sp" />
+
+                            <TextView
+                                android:id="@+id/rejected"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="6dp"
+                                android:tag="display"
+                                android:text="00"
+                                android:textColor="@color/text"
+                                android:textSize="20sp" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="-1dp"
+                            android:layout_weight="1"
+                            android:background="@drawable/cell_bg"
+                            android:orientation="vertical"
+                            android:padding="12dp">
+
+                            <TextView
+                                android:id="@+id/thirdLabel"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:letterSpacing="0.15"
+                                android:text="PLSR"
+                                android:textColor="@color/muted"
+                                android:textSize="10sp" />
+
+                            <TextView
+                                android:id="@+id/third"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="6dp"
+                                android:tag="display"
+                                android:text="0.0"
+                                android:textColor="@color/amber"
+                                android:textSize="20sp" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <Button
+                        android:id="@+id/toggle"
+                        android:layout_width="match_parent"
+                        android:layout_height="58dp"
+                        android:layout_marginTop="16dp"
+                        android:letterSpacing="0.2"
+                        android:stateListAnimator="@null"
+                        android:tag="display"
+                        android:text="@string/start"
+                        android:textColor="#FFFFFF"
+                        android:textSize="16sp" />
+
+                    <TextView
+                        android:id="@+id/coinNote"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:lineSpacingExtra="2dp"
+                        android:textColor="@color/muted"
+                        android:textSize="12sp" />
+
+                    <TextView
+                        android:id="@+id/urlLabel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="16dp"
+                        android:labelFor="@+id/url"
+                        android:letterSpacing="0.12"
+                        android:text="NODE_URI"
+                        android:textColor="@color/muted"
+                        android:textSize="11sp" />
+
+                    <EditText
+                        android:id="@+id/url"
+                        android:layout_width="match_parent"
+                        android:layout_height="44dp"
+                        android:background="@drawable/field_bg"
+                        android:importantForAutofill="no"
+                        android:inputType="textUri"
+                        android:paddingStart="4dp"
+                        android:paddingEnd="4dp"
+                        android:textColor="@color/text"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        android:id="@+id/userLabel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:labelFor="@+id/user"
+                        android:letterSpacing="0.12"
+                        android:text="WALLET_ADDR"
+                        android:textColor="@color/muted"
+                        android:textSize="11sp" />
+
+                    <EditText
+                        android:id="@+id/user"
+                        android:layout_width="match_parent"
+                        android:layout_height="44dp"
+                        android:background="@drawable/field_bg"
+                        android:importantForAutofill="no"
+                        android:inputType="text|textNoSuggestions"
+                        android:paddingStart="4dp"
+                        android:paddingEnd="4dp"
+                        android:textColor="@color/text"
+                        android:textSize="13sp" />
+
+                    <LinearLayout
+                        android:id="@+id/passGroup"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:labelFor="@+id/pass"
+                            android:letterSpacing="0.12"
+                            android:text="POOL_PASS (often x, or d=0.01)"
+                            android:textColor="@color/muted"
+                            android:textSize="11sp" />
+
+                        <EditText
+                            android:id="@+id/pass"
+                            android:layout_width="match_parent"
+                            android:layout_height="44dp"
+                            android:background="@drawable/field_bg"
+                            android:importantForAutofill="no"
+                            android:inputType="text|textNoSuggestions"
+                            android:paddingStart="4dp"
+                            android:paddingEnd="4dp"
+                            android:textColor="@color/text"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/threadsLabel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:letterSpacing="0.12"
+                        android:text="CORES"
+                        android:textColor="@color/muted"
+                        android:textSize="11sp" />
+
+                    <SeekBar
+                        android:id="@+id/threads"
+                        android:layout_width="match_parent"
+                        android:layout_height="40dp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <CheckBox
+                            android:id="@+id/chargingOnly"
+                            android:layout_width="0dp"
+                            android:layout_height="48dp"
+                            android:layout_weight="1"
+                            android:text="CHARGING ONLY"
+                            android:textColor="@color/text"
+                            android:textSize="13sp" />
+
+                        <Button
+                            android:id="@+id/test"
+                            style="?android:attr/borderlessButtonStyle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="48dp"
+                            android:letterSpacing="0.15"
+                            android:text="[PING]"
+                            android:textColor="@color/amber"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/testResult"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/muted"
+                        android:textSize="12sp" />
+                </LinearLayout>
+            </ScrollView>
+
+            <!-- LEDGER page -->
+            <ScrollView
+                android:id="@+id/ledgerPage"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:id="@+id/ledgerContent"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingStart="22dp"
+                    android:paddingTop="16dp"
+                    android:paddingEnd="22dp"
+                    android:paddingBottom="24dp" />
+            </ScrollView>
+        </FrameLayout>
+
+        <!-- Bottom tabs -->
+        <View
             android:layout_width="match_parent"
-            android:layout_height="64dp"
-            android:text="@string/start"
-            android:textSize="18sp" />
+            android:layout_height="1dp"
+            android:background="@color/crimson_dim" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:text="@string/node_url" />
-
-        <EditText
-            android:id="@+id/nodeUrl"
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inputType="textUri"
-            android:importantForAutofill="no" />
+            android:layout_height="56dp"
+            android:orientation="horizontal">
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/address" />
+            <Button
+                android:id="@+id/tabRig"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:letterSpacing="0.25"
+                android:tag="display"
+                android:text="@string/tab_rig"
+                android:textSize="13sp" />
 
-        <EditText
-            android:id="@+id/address"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:fontFamily="monospace"
-            android:hint="plsr…"
-            android:inputType="text|textNoSuggestions"
-            android:importantForAutofill="no"
-            android:textSize="13sp" />
-
-        <TextView
-            android:id="@+id/threadsLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/threads" />
-
-        <SeekBar
-            android:id="@+id/threads"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content" />
-
-        <CheckBox
-            android:id="@+id/chargingOnly"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/charging_only" />
-
-        <Button
-            android:id="@+id/test"
-            style="?android:attr/borderlessButtonStyle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/test" />
-
-        <TextView
-            android:id="@+id/testResult"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textSize="13sp" />
+            <Button
+                android:id="@+id/tabLedger"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:letterSpacing="0.25"
+                android:tag="display"
+                android:text="@string/tab_ledger"
+                android:textSize="13sp" />
+        </LinearLayout>
     </LinearLayout>
-</ScrollView>
+
+    <com.example.stellariteminer.ScanlineView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+</FrameLayout>
