@@ -27,15 +27,16 @@ interface UsefulWork {
     val gainPct: Double      // how much better than the network's baseline
 }
 
-/** Pulsarite: the route through this block's stars. */
+/** Pulsarite: the probe's route through this block's moving stars. */
 data class RouteInfo(
     val starIds: List<Int>,
-    val lengthLy: Double,
-    val baselineLy: Double,
+    val years: Double,           // mission time at the probe's cruise speed
+    val baselineYears: Double,   // the greedy route's mission time
     val improvementPct: Double,
+    val lightYears: Double,      // distance flown
 ) : UsefulWork {
     override val summary get() = String.format(java.util.Locale.US,
-        "ROUTE %d★ · %.1f LY · %.1f%% SHORTER THAN GREEDY", starIds.size, lengthLy, improvementPct)
+        "ROUTE %d★ · %,.0f YR · %.0f LY · %.1f%% FASTER THAN GREEDY", starIds.size, years, lightYears, improvementPct)
     override val gainPct get() = improvementPct
 }
 

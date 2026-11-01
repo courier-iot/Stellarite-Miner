@@ -70,8 +70,9 @@ class SoloChain(private val file: File, val rules: CoinRules, val useful: Useful
 
     // ---- block format (identical to chain.py) -------------------------
 
-    private fun coinbaseJson(height: Long, to: String, amount: Long) =
-        "{\"amount\":$amount,\"coinbase\":true,\"height\":$height,\"to\":\"$to\"}"
+    private fun coinbaseJson(height: Long, to: String, amount: Long, name: String) =
+        if (name.isEmpty()) "{\"amount\":$amount,\"coinbase\":true,\"height\":$height,\"to\":\"$to\"}"
+        else "{\"amount\":$amount,\"coinbase\":true,\"height\":$height,\"name\":\"$name\",\"to\":\"$to\"}"
 
     private fun genesisCoinbaseJson() =
         "{\"amount\":0,\"coinbase\":true,\"height\":0,\"memo\":${pyQuote(rules.genesisMessage)},\"to\":\"genesis\"}"
@@ -138,9 +139,11 @@ class SoloChain(private val file: File, val rules: CoinRules, val useful: Useful
     class Template(val height: Long, val prev: String, val timestamp: Long, val target: String,
                    val coinbase: String, val txRoot: String, val reward: Long)
 
-    @Synchronized fun template(miner: String, now: Long = System.currentTimeMillis() / 1000): Template {
+    /** [name] (A-Z, 0-9, _; 3-16 chars) is claimed in the coinbase, as on a node. */
+    @Synchronized fun template(miner: String, name: String = "", now: Long = System.currentTimeMillis() / 1000): Template {
         val h = height + 1
-        val cb = coinbaseJson(h, miner, reward(h))
+        val n = if (Regex("^[A-Z0-9_]{3,16}$").matches(name)) name else ""
+        val cb = coinbaseJson(h, miner, reward(h), n)
         return Template(h, tip.getString("hash"), maxOf(now, medianTimePast() + 1), nextTarget(), cb,
             txRoot(listOf(cb)), reward(h))
     }
@@ -207,35 +210,22 @@ class StarRouteRules : UsefulRules {
         return chosen.sorted()
     }
 
-    private fun isqrt(v: Long): Long {
-        var r = Math.sqrt(v.toDouble()).toLong()
-        while (r * r > v) r--
-        while ((r + 1) * (r + 1) <= v) r++
-        return r
+    /** Mission time (milli-years) of a route given as catalog star ids. */
+    fun time(route: List<Int>): Long {
+        val f = StarField.fromCatalog(route)
+        return f.time(IntArray(route.size) { it })
     }
 
-    private fun dist(ax: Long, ay: Long, az: Long, bx: Long, by: Long, bz: Long): Long =
-        isqrt((ax - bx) * (ax - bx) + (ay - by) * (ay - by) + (az - bz) * (az - bz))
-
+    /** Distance flown (mly) for a route given as catalog star ids. */
     fun length(route: List<Int>): Long {
-        var total = 0L; var x = 0L; var y = 0L; var z = 0L
-        for (s in route) {
-            total += dist(x, y, z, SoloData.STAR_X[s], SoloData.STAR_Y[s], SoloData.STAR_Z[s])
-            x = SoloData.STAR_X[s]; y = SoloData.STAR_Y[s]; z = SoloData.STAR_Z[s]
-        }
-        return total
+        val f = StarField.fromCatalog(route)
+        return f.length(IntArray(route.size) { it })
     }
 
+    /** The greedy baseline route (catalog star ids) for a set of stars. */
     fun baseline(stars: List<Int>): List<Int> {
-        val left = stars.sorted().toMutableList()
-        val out = ArrayList<Int>()
-        var x = 0L; var y = 0L; var z = 0L
-        while (left.isNotEmpty()) {
-            val next = left.minWith(compareBy<Int>({ dist(x, y, z, SoloData.STAR_X[it], SoloData.STAR_Y[it], SoloData.STAR_Z[it]) }, { it }))
-            left.remove(next); out += next
-            x = SoloData.STAR_X[next]; y = SoloData.STAR_Y[next]; z = SoloData.STAR_Z[next]
-        }
-        return out
+        val f = StarField.fromCatalog(stars.sorted())
+        return f.baseline().map { f.ids[it] }
     }
 
     override fun score(prevHash: String, value: Any): Pair<Long, Long> {
@@ -243,7 +233,7 @@ class StarRouteRules : UsefulRules {
         val route = List(a.length()) { a.getInt(it) }
         val prob = problem(prevHash)
         require(route.sorted() == prob) { "route must visit each of the block's stars exactly once" }
-        return length(route) to length(baseline(prob))
+        return time(route) to time(baseline(prob))
     }
 }
 

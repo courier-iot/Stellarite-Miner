@@ -31,5 +31,11 @@ GENESIS_TARGET = MAX_TARGET >> GENESIS_DIFFICULTY_BITS
 # better routes win blocks. See stars.py and README "Useful work".
 ROUTE_BONUS_EXPONENT = 12
 
+# The probe: launched from the Sun in LAUNCH_YEAR, cruising at a constant speed
+# (100 milli-light-years per year = 10% of light speed), flying past each star.
+# Stars move while it travels, so routes are scored by mission time.
+PROBE_SPEED_MLY_PER_YEAR = 100
+LAUNCH_YEAR = 2100
+
 GENESIS_TIMESTAMP = 1_790_812_800  # 2026-10-01 00:00 UTC
-GENESIS_MESSAGE = "Pulsarite genesis - built for learning"
+GENESIS_MESSAGE = "Pulsarite genesis v2 - moving stars, real travel times"

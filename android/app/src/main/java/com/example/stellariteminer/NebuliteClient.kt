@@ -15,7 +15,7 @@ import java.net.URLEncoder
  *  2. hashing: search nonces against that target (MiningEngine)
  * Each refresh for the same block keeps improving the plan it already has.
  */
-class NebuliteClient(baseUrl: String, private val address: String) : PoolBackend {
+class NebuliteClient(baseUrl: String, private val address: String, private val name: String = "") : PoolBackend {
     override val unitName = "blocks"
     private val http = NodeClient(baseUrl)
 
@@ -26,7 +26,7 @@ class NebuliteClient(baseUrl: String, private val address: String) : PoolBackend
     fun info(): JSONObject = http.info()
 
     override fun getWork(): Job {
-        val (code, work) = http.request("GET", "/mining/work?address=" + URLEncoder.encode(address, "UTF-8"), null)
+        val (code, work) = http.request("GET", NodeClient.workPath(address, name), null)
         if (code != 200) throw IOException(work.optString("error", "HTTP $code"))
         val jobId = work.getString("job_id")
 

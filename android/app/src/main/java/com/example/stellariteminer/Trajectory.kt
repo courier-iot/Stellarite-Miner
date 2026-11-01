@@ -233,6 +233,21 @@ class TrajectoryModel(work: JSONObject) {
         return DoubleArray(6) { s[it] + h / 6 * (k1[it] + 2 * k2[it] + 2 * k3[it] + k4[it]) }
     }
 
+    /** The spacecraft's position (AU) on day `day` of a mission, or null outside it. */
+    fun positionAt(seq: IntArray, days: IntArray, day: Double): DoubleArray? {
+        for (i in 0 until seq.size - 1) {
+            if (day < days[i] || day > days[i + 1]) continue
+            val r1 = state(seq[i], days[i].toDouble()); val r2 = state(seq[i + 1], days[i + 1].toDouble())
+            val v = lambert(r1, r2, (days[i + 1] - days[i]).toDouble()) ?: return null
+            var s = doubleArrayOf(r1[0], r1[1], r1[2], v[0], v[1], v[2])
+            val dt = day - days[i]
+            val steps = maxOf(1, (dt / 2.0).toInt())
+            repeat(steps) { s = rk4(s, dt / steps) }
+            return doubleArrayOf(s[0], s[1], s[2])
+        }
+        return null
+    }
+
     /** One orbit of a planet as drawable points (from its elements at `day`). */
     fun orbitPoints(pid: Int, day: Double, n: Int = 120): List<DoubleArray> {
         val a = planets[pid].el[0]

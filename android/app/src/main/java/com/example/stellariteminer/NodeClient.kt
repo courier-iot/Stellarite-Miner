@@ -17,38 +17,33 @@ import java.net.URLEncoder
  * Each time fresh work is fetched for the same block, the optimiser keeps improving
  * the route it already has, so the target keeps getting easier.
  */
-class NodeClient(baseUrl: String, private val address: String = "") : PoolBackend {
+class NodeClient(baseUrl: String, private val address: String = "", private val name: String = "") : PoolBackend {
     override val unitName = "blocks"
     private val base = baseUrl.trim().trimEnd('/')
 
-    // One optimiser per star problem, so improvement carries over between refreshes.
+    // One planner per star problem, so improvement carries over between refreshes.
     private var problemKey = ""
-    private var optimizer: RouteOptimizer? = null
+    private var planner: MovingRoutePlanner? = null
+    private var field: StarField? = null
 
     fun info(): JSONObject = request("GET", "/info", null).second
 
     override fun getWork(): Job {
-        val (code, work) = request("GET", "/mining/work?address=" + URLEncoder.encode(address, "UTF-8"), null)
+        val (code, work) = request("GET", workPath(address, name), null)
         if (code != 200) throw IOException(work.optString("error", "HTTP $code"))
         val jobId = work.getString("job_id")
-        val stars = work.getJSONArray("stars")
-        val n = stars.length()
-        val ids = IntArray(n) { stars.getJSONObject(it).getInt("id") }
-
-        // 1. Useful work: route through this block's stars.
-        val key = ids.joinToString(",")
-        val fresh = key != problemKey || optimizer == null
+        // 1. Useful work: a fast route through this block's moving stars.
+        val f = StarField.fromWork(work)
+        val key = f.ids.joinToString(",")
+        val fresh = key != problemKey || planner == null
         if (fresh) {
-            optimizer = RouteOptimizer(
-                DoubleArray(n) { stars.getJSONObject(it).getDouble("x") },
-                DoubleArray(n) { stars.getJSONObject(it).getDouble("y") },
-                DoubleArray(n) { stars.getJSONObject(it).getDouble("z") },
-            )
+            field = f
+            planner = MovingRoutePlanner(f)
             problemKey = key
         }
-        val opt = optimizer!!
+        val opt = planner!!
         opt.improve(if (fresh) FIRST_ROUTE_MS else REFINE_ROUTE_MS)
-        val route = opt.best.map { ids[it] }
+        val route = opt.best.map { f.ids[it] }
 
         // 2. The node scores the route and gives us the header to hash.
         val (rc, scored) = request("POST", "/mining/route",
@@ -63,8 +58,8 @@ class NodeClient(baseUrl: String, private val address: String = "") : PoolBacken
             littleEndian = false,
             rewardUnits = work.getLong("reward"),
             unitsPerCoin = work.getLong("units_per_coin"),
-            work = RouteInfo(route, scored.getDouble("length_ly"), scored.getDouble("baseline_ly"),
-                scored.getDouble("improvement_pct")),
+            work = RouteInfo(route, scored.getDouble("years"), scored.getDouble("baseline_years"),
+                scored.getDouble("improvement_pct"), scored.getDouble("length_ly")),
         )
     }
 
@@ -83,14 +78,14 @@ class NodeClient(baseUrl: String, private val address: String = "") : PoolBacken
     override fun hasNewWork() = false
     override fun close() {}
 
-    internal fun request(method: String, path: String, payload: JSONObject?, rawBody: String? = null): Pair<Int, JSONObject> {
+    fun request(method: String, path: String, payload: JSONObject?, rawBody: String? = null): Pair<Int, JSONObject> {
         val (code, text) = requestRaw(method, path, payload, rawBody)
         val json = try { JSONObject(text) } catch (e: Exception) { JSONObject().put("error", "HTTP $code") }
         return code to json
     }
 
     /** Raw response text, for endpoints that return JSON arrays (/routes, /missions). */
-    internal fun requestRaw(method: String, path: String, payload: JSONObject?, rawBody: String? = null): Pair<Int, String> {
+    fun requestRaw(method: String, path: String, payload: JSONObject?, rawBody: String? = null): Pair<Int, String> {
         val conn = URL(base + path).openConnection() as HttpURLConnection
         try {
             conn.requestMethod = method
@@ -112,6 +107,10 @@ class NodeClient(baseUrl: String, private val address: String = "") : PoolBacken
     }
 
     companion object {
+        /** /mining/work URL, claiming [name] in the coinbase when set. */
+        fun workPath(address: String, name: String) = "/mining/work?address=" + URLEncoder.encode(address, "UTF-8") +
+            (if (name.isNotBlank()) "&name=" + URLEncoder.encode(name, "UTF-8") else "")
+
         private const val FIRST_ROUTE_MS = 2500L   // optimise a new block's route this long
         private const val REFINE_ROUTE_MS = 1000L  // then keep refining on each refresh
 

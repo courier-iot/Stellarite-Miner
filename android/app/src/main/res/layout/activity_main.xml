@@ -408,6 +408,17 @@
                         android:orientation="horizontal">
 
                         <Button
+                            android:id="@+id/sendCoins"
+                            style="?android:attr/borderlessButtonStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="44dp"
+                            android:layout_weight="1"
+                            android:letterSpacing="0.1"
+                            android:text="[SEND]"
+                            android:textColor="@color/crimson_light"
+                            android:textSize="11sp" />
+
+                        <Button
                             android:id="@+id/newWallet"
                             style="?android:attr/borderlessButtonStyle"
                             android:layout_width="0dp"
@@ -634,6 +645,47 @@
                     android:layout_height="0dp"
                     android:layout_weight="1"
                     android:contentDescription="3D map. Drag to rotate, pinch to zoom, double-tap to reset." />
+
+                <TextView
+                    android:id="@+id/mapInfo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="22dp"
+                    android:layout_marginEnd="22dp"
+                    android:background="@drawable/cell_bg"
+                    android:lineSpacingExtra="2dp"
+                    android:padding="10dp"
+                    android:textColor="@color/text"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
+
+                <LinearLayout
+                    android:id="@+id/timeRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="22dp"
+                    android:paddingTop="6dp"
+                    android:paddingEnd="22dp"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/timeLabel"
+                        android:layout_width="96dp"
+                        android:layout_height="wrap_content"
+                        android:letterSpacing="0.08"
+                        android:textColor="@color/amber"
+                        android:textSize="12sp" />
+
+                    <SeekBar
+                        android:id="@+id/timeSlider"
+                        android:layout_width="0dp"
+                        android:layout_height="40dp"
+                        android:layout_weight="1"
+                        android:contentDescription="Mission time"
+                        android:max="1000" />
+                </LinearLayout>
 
                 <TextView
                     android:id="@+id/mapLegend"

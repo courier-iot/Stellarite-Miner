@@ -143,9 +143,27 @@ def balance(address):
                    if tx_sender(t) == address]
         nonce = chain.state.nonce(address)
         next_nonce = max([nonce] + [n + 1 for n in pending])
-        return jsonify({"address": address, "balance": chain.state.balance(address),
+        return jsonify({"address": address, "name": chain.state.name_of.get(address),
+                        "units_per_coin": C.UNITS_PER_COIN, "balance": chain.state.balance(address),
                         "balance_coins": chain.state.balance(address) / C.UNITS_PER_COIN,
                         "nonce": nonce, "next_nonce": next_nonce})
+
+
+@app.get("/name/<name>")
+def lookup_name(name):
+    """Resolve a username to its address (so coins can be sent to a name)."""
+    name = name.strip().upper()
+    with lock:
+        addr = chain.state.name_owner(name)
+    if addr is None:
+        return err(f"no one has claimed the name {name} on this network", 404)
+    return jsonify({"name": name, "address": addr})
+
+
+@app.get("/names")
+def list_names():
+    with lock:
+        return jsonify(dict(sorted(chain.state.names.items())))
 
 
 @app.post("/tx")
@@ -207,9 +225,10 @@ def add_peer():
 @app.get("/mining/work")
 def mining_work():
     address = request.args.get("address", "")
+    name = request.args.get("name", "").strip().upper() or None
     try:
         with lock:
-            template = chain.build_template(address)
+            template = chain.build_template(address, name=name)
             job_id = secrets.token_hex(8)
             jobs[job_id] = template
             while len(jobs) > MAX_JOBS:

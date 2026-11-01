@@ -10,7 +10,7 @@ import java.security.SecureRandom
  */
 object Secp256k1 {
     private val P = BigInteger("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F", 16)
-    val N = BigInteger("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFBAAEDCE6AF48A03BBFD25E8CD0364141", 16)
+    val N = BigInteger("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141", 16)
     private val GX = BigInteger("79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798", 16)
     private val GY = BigInteger("483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8", 16)
     private val TWO = BigInteger.valueOf(2)
@@ -32,16 +32,67 @@ object Secp256k1 {
         return Pt(x, (l * (a.x - x) - a.y).mod(P))
     }
 
+    private fun multiply(k: BigInteger): Pt {
+        var result: Pt? = null
+        var addend: Pt? = Pt(GX, GY)
+        for (i in 0 until k.bitLength()) {
+            if (k.testBit(i)) result = add(result, addend)
+            addend = add(addend, addend)
+        }
+        return result!!
+    }
+
+    /**
+     * ECDSA signature (DER-encoded) over SHA-256(message), with the nonce chosen
+     * deterministically per RFC 6979 so a weak random generator can't leak the key.
+     * Verifies with the nodes' check (cryptography's ECDSA(SHA256)).
+     */
+    fun sign(priv: BigInteger, message: ByteArray): ByteArray {
+        val h = MessageDigest.getInstance("SHA-256").digest(message)
+        val z = BigInteger(1, h)
+        val x = toBytes32(priv)
+        val h1 = toBytes32(z.mod(N))
+        fun hmac(key: ByteArray, vararg parts: ByteArray): ByteArray {
+            val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+            mac.init(javax.crypto.spec.SecretKeySpec(key, "HmacSHA256"))
+            parts.forEach { mac.update(it) }
+            return mac.doFinal()
+        }
+        var v = ByteArray(32) { 1 }
+        var kk = ByteArray(32)
+        kk = hmac(kk, v, byteArrayOf(0), x, h1); v = hmac(kk, v)
+        kk = hmac(kk, v, byteArrayOf(1), x, h1); v = hmac(kk, v)
+        while (true) {
+            v = hmac(kk, v)
+            val k = BigInteger(1, v)
+            if (k.signum() > 0 && k < N) {
+                val r = multiply(k).x.mod(N)
+                var s = k.modInverse(N).multiply(z.add(r.multiply(priv))).mod(N)
+                if (r.signum() != 0 && s.signum() != 0) {
+                    if (s > N.shiftRight(1)) s = N.subtract(s)     // low-S form
+                    return der(r, s)
+                }
+            }
+            kk = hmac(kk, v, byteArrayOf(0)); v = hmac(kk, v)
+        }
+    }
+
+    private fun der(r: BigInteger, s: BigInteger): ByteArray {
+        fun int(i: BigInteger): ByteArray { val b = i.toByteArray(); return byteArrayOf(0x02, b.size.toByte()) + b }
+        val body = int(r) + int(s)
+        return byteArrayOf(0x30, body.size.toByte()) + body
+    }
+
+    private fun toBytes32(i: BigInteger): ByteArray {
+        val b = i.toByteArray()
+        val src = if (b.size > 32) b.copyOfRange(b.size - 32, b.size) else b
+        return ByteArray(32).also { System.arraycopy(src, 0, it, 32 - src.size, src.size) }
+    }
+
     /** 33-byte compressed public key for a private key in [1, N-1]. */
     fun publicKey(priv: BigInteger): ByteArray {
         require(priv.signum() > 0 && priv < N) { "private key out of range" }
-        var result: Pt? = null
-        var addend: Pt? = Pt(GX, GY)
-        for (i in 0 until priv.bitLength()) {
-            if (priv.testBit(i)) result = add(result, addend)
-            addend = add(addend, addend)
-        }
-        val r = result!!
+        val r = multiply(priv)
         val x = r.x.toByteArray().let { b -> ByteArray(32).also { o ->
             val src = if (b.size > 32) b.copyOfRange(b.size - 32, b.size) else b
             System.arraycopy(src, 0, o, 32 - src.size, src.size) } }
@@ -82,6 +133,20 @@ class Wallet(private val prefs: android.content.SharedPreferences) {
 
     fun address(prefix: String): String? = privateKeyHex?.let { addressFor(it, prefix) }
 
+    /**
+     * A signed transaction, exactly as the node expects it:
+     * {"from": public key hex, "to", "amount", "fee", "nonce", "sig"}, where sig signs
+     * the canonical JSON of the other fields (sorted keys, no spaces), as wallet.py does.
+     */
+    fun signTransaction(to: String, amount: Long, fee: Long, nonce: Long): org.json.JSONObject {
+        val key = privateKeyHex ?: throw IllegalStateException("no wallet on this phone")
+        val pub = hex(Secp256k1.publicKey(BigInteger(key, 16)))
+        val signing = "{\"amount\":$amount,\"fee\":$fee,\"from\":\"$pub\",\"nonce\":$nonce,\"to\":\"$to\"}"
+        val sig = hex(Secp256k1.sign(BigInteger(key, 16), signing.toByteArray()))
+        return org.json.JSONObject().put("from", pub).put("to", to).put("amount", amount)
+            .put("fee", fee).put("nonce", nonce).put("sig", sig)
+    }
+
     companion object {
         private const val KEY = "wallet_private_key"
 
@@ -93,6 +158,17 @@ class Wallet(private val prefs: android.content.SharedPreferences) {
             val digest = sha256(pub).copyOfRange(0, 20)
             val check = sha256(sha256(digest)).copyOfRange(0, 4)
             return prefix + (digest + check).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        }
+
+        private fun hex(b: ByteArray) = b.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+        /** Same check as crypto_utils.is_valid_address. */
+        fun isValidAddress(addr: String, prefix: String): Boolean {
+            if (!addr.startsWith(prefix)) return false
+            val body = addr.substring(prefix.length)
+            if (body.length != 48 || body.any { it !in "0123456789abcdef" }) return false
+            val raw = ByteArray(24) { body.substring(2 * it, 2 * it + 2).toInt(16).toByte() }
+            return sha256(sha256(raw.copyOfRange(0, 20))).copyOfRange(0, 4).contentEquals(raw.copyOfRange(20, 24))
         }
 
         /** The wallet.json contents for this key, so it can be used with wallet.py too. */

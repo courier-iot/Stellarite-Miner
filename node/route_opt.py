@@ -92,3 +92,58 @@ def optimise(pts, seconds=2.0, sol=(0, 0, 0), seed=None):
         if L < best_len - 1e-9:
             best, best_len = cand, L
     return best
+
+
+# ---- moving stars: exact mission-time scoring ---------------------------
+
+def mission_time(route_ids, work):
+    """Mission time (milli-years) for star ids, using the star data in a /mining/work reply.
+
+    Same integer maths as stars.route_time, so it matches the node's score exactly.
+    """
+    by_id = {s["id"]: s for s in work["stars"]}
+    speed, t0, iters = work["probe_speed_mly_per_year"], work["launch_t"], work["intercept_iterations"]
+
+    def pos(s, t):
+        return (s["x"] + s["vx"] * t // 1_000_000, s["y"] + s["vy"] * t // 1_000_000,
+                s["z"] + s["vz"] * t // 1_000_000)
+
+    here, t = (0, 0, 0), t0
+    for sid in route_ids:
+        s = by_id[sid]
+        arrive = t
+        for _ in range(iters):
+            p = pos(s, arrive)
+            arrive = t + math.isqrt(sum((p[k] - here[k]) ** 2 for k in range(3))) * 1000 // speed
+        t, here = arrive, pos(s, arrive)
+    return t - t0
+
+
+def polish(order, cost, seconds):
+    """2-opt and Or-opt using an exact (slow) cost function, until no gain or time runs out."""
+    deadline = time.time() + seconds
+    best = cost(order)
+    improved = True
+    while improved and time.time() < deadline:
+        improved = False
+        n = len(order)
+        for i in range(n - 1):
+            for j in range(i + 1, n):
+                cand = order[:i] + order[i:j + 1][::-1] + order[j + 1:]
+                c = cost(cand)
+                if c < best:
+                    order, best, improved = cand, c, True
+            if time.time() > deadline:
+                break
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    continue
+                cand = order[:i] + order[i + 1:]
+                cand.insert(j, order[i])
+                c = cost(cand)
+                if c < best:
+                    order, best, improved = cand, c, True
+            if time.time() > deadline:
+                break
+    return order

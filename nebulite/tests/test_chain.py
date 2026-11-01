@@ -211,6 +211,33 @@ class ChainTests(unittest.TestCase):
         self.assertAlmostEqual(vinf, 2.94, delta=0.03)
 
 
+    def test_usernames(self):
+        now = self.clock()
+        self.bc.add_block(mine(self.bc.build_template(self.alice.addr, now=now, name="NOVA_7")), now=now)
+        self.assertEqual(self.bc.state.name_owner("NOVA_7"), self.alice.addr)
+        # someone else can't take it, either through the template or by forging a block
+        with self.assertRaises(ch.ValidationError):
+            self.bc.build_template(self.bob.addr, now=self.clock(), name="NOVA_7")
+        now = self.clock()
+        t = self.bc.build_template(self.bob.addr, now=now)
+        t["txs"][0]["name"] = "NOVA_7"
+        t["tx_root"] = ch.tx_root(t["txs"])
+        with self.assertRaises(ch.ValidationError):
+            self.bc.add_block(mine(t), now=now)
+        # bad formats are refused
+        for bad in ("no", "lowercase", "WAY_TOO_LONG_A_NAME", "BAD-CHAR"):
+            with self.assertRaises(ch.ValidationError):
+                self.bc.build_template(self.bob.addr, now=self.clock(), name=bad)
+        # switching names releases the old one
+        now = self.clock()
+        self.bc.add_block(mine(self.bc.build_template(self.alice.addr, now=now, name="ORBIT")), now=now)
+        self.assertIsNone(self.bc.state.name_owner("NOVA_7"))
+        self.assertEqual(self.bc.state.name_of[self.alice.addr], "ORBIT")
+        # names survive a reload / re-validation from genesis
+        other = ch.Blockchain()
+        self.assertTrue(other.replace_chain(self.bc.blocks))
+        self.assertEqual(other.state.name_owner("ORBIT"), self.alice.addr)
+
     def test_persistence(self):
         with tempfile.TemporaryDirectory() as d:
             bc = ch.Blockchain(d)
@@ -229,8 +256,9 @@ class ApiTests(unittest.TestCase):
         self.client = node.app.test_client()
         self.alice, self.bob = Wallet(), Wallet()
 
-    def mine_via_api(self, addr, plan_seconds=0.5):
-        work = self.client.get(f"/mining/work?address={addr}").get_json()
+    def mine_via_api(self, addr, plan_seconds=0.5, name=None):
+        q = f"&name={name}" if name else ""
+        work = self.client.get(f"/mining/work?address={addr}{q}").get_json()
         seq, days, _ = optimise(work["mission"], seconds=plan_seconds, max_flybys=1, seed=1)
         scored = self.client.post("/mining/trajectory",
                                   json={"job_id": work["job_id"], "seq": seq, "days": days}).get_json()
@@ -292,6 +320,17 @@ class ApiTests(unittest.TestCase):
         bad = [dict(b) for b in other.blocks] + [dict(other.blocks[-1], height=3)]
         self.assertFalse(self.client.post("/chain/import", json=bad).get_json()["adopted"])
         self.assertEqual(self.client.post("/chain/import", json={"no": 1}).status_code, 400)
+
+    def test_name_endpoints(self):
+        work = self.client.get(f"/mining/work?address={self.alice.addr}&name=nova_7").get_json()
+        self.assertIn("job_id", work)
+        self.assertEqual(self.client.get("/name/NOVA_7").status_code, 404)   # not claimed until mined
+        self.assertTrue(self.mine_via_api(self.alice.addr, name="NOVA_7").get_json()["ok"])
+        self.assertEqual(self.client.get("/name/nova_7").get_json()["address"], self.alice.addr)
+        self.assertEqual(self.client.get(f"/balance/{self.alice.addr}").get_json()["name"], "NOVA_7")
+        r = self.client.get(f"/mining/work?address={self.bob.addr}&name=NOVA_7")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("taken", r.get_json()["error"])
 
     def test_bad_address_refused(self):
         r = self.client.get("/mining/work?address=nope")

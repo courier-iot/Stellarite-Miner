@@ -16,6 +16,7 @@ Model
 """
 import json
 import os
+import re
 import statistics
 import time
 
@@ -25,6 +26,12 @@ from crypto_utils import (address_from_pubkey, canonical, is_valid_address,
                           sha256d, verify)
 
 MAX_FUTURE_DRIFT = 2 * 60 * 60  # reject blocks timestamped >2h ahead
+NAME_RE = re.compile(r"^[A-Z0-9_]{3,16}$")   # usernames: 3-16 of A-Z, 0-9, _
+
+
+def check_name(name):
+    if not isinstance(name, str) or not NAME_RE.match(name):
+        raise ValidationError("names are 3-16 characters: A-Z, 0-9 and _")
 
 
 class ValidationError(Exception):
@@ -153,17 +160,40 @@ def make_genesis() -> dict:
 
 
 class State:
-    """Balances and nonces after applying a chain of blocks."""
+    """Balances, nonces and usernames after applying a chain of blocks.
+
+    Usernames are claimed in the coinbase of a mined block: the first address to
+    mine a block with a name owns it. An address can switch to a new free name,
+    which releases its old one.
+    """
 
     def __init__(self):
         self.balances = {}
         self.nonces = {}
+        self.names = {}        # NAME -> address
+        self.name_of = {}      # address -> NAME
 
     def copy(self):
         s = State()
         s.balances = dict(self.balances)
         s.nonces = dict(self.nonces)
+        s.names = dict(self.names)
+        s.name_of = dict(self.name_of)
         return s
+
+    def name_owner(self, name):
+        return self.names.get(name)
+
+    def claim_name(self, address, name):
+        check_name(name)
+        owner = self.names.get(name)
+        if owner is not None and owner != address:
+            raise ValidationError(f"name {name} is taken")
+        old = self.name_of.get(address)
+        if old and old != name:
+            del self.names[old]
+        self.names[name] = address
+        self.name_of[address] = name
 
     def balance(self, addr):
         return self.balances.get(addr, 0)
@@ -197,7 +227,7 @@ class State:
         cb = txs[0]
         if block["height"] == 0:
             return
-        if set(cb) != {"coinbase", "to", "amount", "height"} or cb["coinbase"] is not True:
+        if set(cb) - {"name"} != {"coinbase", "to", "amount", "height"} or cb["coinbase"] is not True:
             raise ValidationError("bad coinbase fields")
         if cb["height"] != block["height"]:
             raise ValidationError("coinbase height mismatch")
@@ -206,6 +236,8 @@ class State:
         if cb["amount"] != block_reward(block["height"]) + fees:
             raise ValidationError("wrong coinbase amount")
         self.balances[cb["to"]] = self.balance(cb["to"]) + cb["amount"]
+        if "name" in cb:
+            self.claim_name(cb["to"], cb["name"])
 
 
 def next_target(blocks: list) -> str:
@@ -286,7 +318,10 @@ class Blockchain:
         with open(self._path) as f:
             saved = json.load(f)
         if not self.replace_chain(saved, require_more_work=False):
-            raise RuntimeError("saved chain is invalid; delete it to start fresh")
+            # The rules changed (or the file is damaged): keep the old file and start a new chain.
+            moved = self._path + f".old-{int(time.time())}"
+            os.replace(self._path, moved)
+            print(f"Saved chain doesn't match this version's rules; moved it to {moved} and started fresh.")
 
     def save(self):
         if not self.data_dir:
@@ -355,10 +390,15 @@ class Blockchain:
                 del self.mempool[tid]
 
     # -- mining --
-    def build_template(self, miner_address, now=None):
-        """A block ready to mine except for its nonce."""
+    def build_template(self, miner_address, now=None, name=None):
+        """A block ready to mine except for its nonce. `name` claims a username in the coinbase."""
         if not is_valid_address(miner_address):
             raise ValidationError("bad miner address")
+        if name:
+            check_name(name)
+            owner = self.state.name_owner(name)
+            if owner is not None and owner != miner_address:
+                raise ValidationError(f"name {name} is taken by another address: pick a different username")
         now = int(now if now is not None else time.time())
         state = self.state.copy()
         chosen, fees = [], 0
@@ -376,6 +416,8 @@ class Blockchain:
         height = self.tip["height"] + 1
         coinbase = {"coinbase": True, "to": miner_address,
                     "amount": block_reward(height) + fees, "height": height}
+        if name:
+            coinbase["name"] = name
         block = {
             "height": height,
             "prev_hash": self.tip["hash"],
@@ -397,6 +439,7 @@ class Blockchain:
             ev = T.evaluate(tr["seq"], tr["days"])
             out.append({
                 "height": b["height"], "miner": b["txs"][0]["to"], "timestamp": b["timestamp"],
+                "miner_name": self.state.name_of.get(b["txs"][0]["to"]),
                 "path": [T.PLANETS[p][0] for p in tr["seq"]], "seq": tr["seq"], "days": tr["days"],
                 "dv_kms": round(ev["dv_kms"], 3), "years": round(ev["years"], 2),
                 "cost": tr["cost"], "baseline": tr["baseline"],

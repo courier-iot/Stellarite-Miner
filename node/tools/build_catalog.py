@@ -6,6 +6,9 @@ CC BY-SA 4.0) and run:
 
   python tools/build_catalog.py hygdata_v41.csv --max-ly 50 -o stars.json
 
+Positions and space velocities (from proper motion and radial velocity) are both
+included, so routes account for stars moving during the probe's flight.
+
 Put stars.json next to node.py on EVERY node and delete each node's data/ folder:
 the catalog is part of consensus, and changing it starts a new chain.
 """
@@ -34,11 +37,17 @@ def main():
                 continue  # skip the Sun and stars with unknown distance
             name = (row.get("proper") or row.get("gl") or
                     (f"HIP {row['hip']}" if row.get("hip") else f"HYG {row['id']}")).strip()
+            def vel(key):   # HYG gives vx/vy/vz in parsecs per year; we store mly per 1000 years
+                try:
+                    return round(float(row.get(key) or 0) * PC_TO_LY * 1_000_000)
+                except ValueError:
+                    return 0
             stars.append({
                 "name": name,
                 "x": round(float(row["x"]) * PC_TO_LY * 1000),
                 "y": round(float(row["y"]) * PC_TO_LY * 1000),
                 "z": round(float(row["z"]) * PC_TO_LY * 1000),
+                "vx": vel("vx"), "vy": vel("vy"), "vz": vel("vz"),
             })
 
     stars.sort(key=lambda s: (s["x"] ** 2 + s["y"] ** 2 + s["z"] ** 2, s["name"]))

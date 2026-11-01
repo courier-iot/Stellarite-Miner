@@ -144,9 +144,27 @@ def balance(address):
                    if tx_sender(t) == address]
         nonce = chain.state.nonce(address)
         next_nonce = max([nonce] + [n + 1 for n in pending])
-        return jsonify({"address": address, "balance": chain.state.balance(address),
+        return jsonify({"address": address, "name": chain.state.name_of.get(address),
+                        "units_per_coin": C.UNITS_PER_COIN, "balance": chain.state.balance(address),
                         "balance_coins": chain.state.balance(address) / C.UNITS_PER_COIN,
                         "nonce": nonce, "next_nonce": next_nonce})
+
+
+@app.get("/name/<name>")
+def lookup_name(name):
+    """Resolve a username to its address (so coins can be sent to a name)."""
+    name = name.strip().upper()
+    with lock:
+        addr = chain.state.name_owner(name)
+    if addr is None:
+        return err(f"no one has claimed the name {name} on this network", 404)
+    return jsonify({"name": name, "address": addr})
+
+
+@app.get("/names")
+def list_names():
+    with lock:
+        return jsonify(dict(sorted(chain.state.names.items())))
 
 
 @app.post("/tx")
@@ -207,9 +225,10 @@ def add_peer():
 @app.get("/mining/work")
 def mining_work():
     address = request.args.get("address", "")
+    name = request.args.get("name", "").strip().upper() or None
     try:
         with lock:
-            template = chain.build_template(address)
+            template = chain.build_template(address, name=name)
             job_id = secrets.token_hex(8)
             jobs[job_id] = template
             while len(jobs) > MAX_JOBS:
@@ -223,7 +242,10 @@ def mining_work():
         "height": template["height"],
         "stars": [dict(stars.CATALOG[i]) for i in problem],
         "baseline_route": baseline,
-        "baseline_ly": stars.route_length(baseline) / 1000,
+        "baseline_years": stars.route_time(baseline) / 1000,
+        "probe_speed_mly_per_year": stars.SPEED,
+        "launch_t": stars.LAUNCH_T,
+        "intercept_iterations": stars.INTERCEPT_ITERATIONS,
         "base_target": template["target"],
         "bonus_exponent": C.ROUTE_BONUS_EXPONENT,
         "reward": template["txs"][0]["amount"],
@@ -254,8 +276,9 @@ def mining_route():
     return jsonify({
         "prefix": header_prefix(block).hex(),
         "target": format(target, "064x"),
-        "length_ly": score["length"] / 1000,
-        "baseline_ly": score["baseline"] / 1000,
+        "years": score["length"] / 1000,
+        "baseline_years": score["baseline"] / 1000,
+        "length_ly": stars.route_length(body.get("route")) / 1000,
         "improvement_pct": round(100 * (1 - score["length"] / score["baseline"]), 2),
     })
 
@@ -297,7 +320,9 @@ def routes():
 @app.get("/stars")
 def star_catalog():
     return jsonify({"source": stars.CATALOG_SOURCE, "catalog_id": stars.CATALOG_ID,
-                    "count": len(stars.CATALOG), "stars": stars.CATALOG})
+                    "count": len(stars.CATALOG), "stars": stars.CATALOG,
+                    "probe_speed_mly_per_year": stars.SPEED, "launch_t": stars.LAUNCH_T,
+                    "intercept_iterations": stars.INTERCEPT_ITERATIONS})
 
 
 def lan_addresses():

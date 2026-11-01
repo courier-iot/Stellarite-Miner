@@ -7,6 +7,16 @@ class Prefs(context: Context) {
     private val app = context.applicationContext ?: context
     private val sp = context.getSharedPreferences("miner", Context.MODE_PRIVATE)
 
+    /** Username, written into the blocks you mine (claims it on the network). Empty = none. */
+    var username: String
+        get() = sp.getString("username", "")!!
+        set(v) = sp.edit().putString("username", v.trim().uppercase()).apply()
+
+    /** First-run setup finished. */
+    var setupDone: Boolean
+        get() = sp.getBoolean("setup_done", false)
+        set(v) = sp.edit().putBoolean("setup_done", v).apply()
+
     /** The app's own wallet (one key for both coins). */
     val wallet = Wallet(sp)
 
@@ -47,9 +57,9 @@ class Prefs(context: Context) {
         val c = coin
         return when (c.protocol) {
             Protocol.NODE -> when {
-                solo(c.id) -> SoloBackend(SoloBackend.chainFor(app, c), user(c.id))
-                c.kind == WorkKind.TRAJECTORIES -> NebuliteClient(url(c.id), user(c.id))
-                else -> NodeClient(url(c.id), user(c.id))
+                solo(c.id) -> SoloBackend(SoloBackend.chainFor(app, c), user(c.id), username)
+                c.kind == WorkKind.TRAJECTORIES -> NebuliteClient(url(c.id), user(c.id), username)
+                else -> NodeClient(url(c.id), user(c.id), username)
             }
             Protocol.STRATUM -> StratumClient(url(c.id), user(c.id), password(c.id))
         }

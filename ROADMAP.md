@@ -8,14 +8,15 @@ Every change to how blocks are scored is a consensus change: all nodes must upgr
 
 Today: straight-line routes from the Sun through 24 stars at fixed positions, scored by total distance.
 
-- [ ] **Star movement.** Stars drift across the sky (proper motion) and toward or away from us (radial velocity); over a century-long trip Barnard's Star moves about 0.05 light-years. Add `pmra`, `pmdec` and `rv` to each catalog star and compute positions at the moment the probe arrives, not today.
-  - [ ] Extend `tools/build_catalog.py` to read proper motion and radial velocity from HYG (`pmra`, `pmdec`, `rv`) or Gaia DR3.
-  - [ ] Store motion as integer milli-light-years per millennium, so consensus stays exact.
-  - [ ] Compute each star's position at its arrival time (needs the travel-time item below).
-- [ ] **Travel time.** Give the probe a cruise speed (start with 0.1c as a configurable network parameter) and score routes by total mission time, not just distance. With moving stars, each leg becomes an intercept problem: aim where the star will be.
-  - [ ] Add `PROBE_SPEED_C` to `config.py`; compute arrival times leg by leg.
-  - [ ] Iterate each leg's intercept point a fixed number of times, deterministic and integer-based.
-  - [ ] Show mission duration in years on the HUD, the ledger and `/routes`.
+- [x] **Star movement.** Stars drift across the sky (proper motion) and toward or away from us (radial velocity); over a century-long trip Barnard's Star moves about 0.05 light-years. Add `pmra`, `pmdec` and `rv` to each catalog star and compute positions at the moment the probe arrives, not today.
+  - [x] `tools/build_catalog.py` reads HYG's space velocities; the built-in catalog has approximate motions.
+  - [x] Motion stored as integer milli-light-years per thousand years, so consensus stays exact.
+  - [x] Each star's position is computed at the moment the probe arrives.
+- [x] **Travel time.** Give the probe a cruise speed (start with 0.1c as a configurable network parameter) and score routes by total mission time, not just distance. With moving stars, each leg becomes an intercept problem: aim where the star will be.
+  - [x] `PROBE_SPEED_MLY_PER_YEAR` (10% of c) and `LAUNCH_YEAR` (2100) in `config.py`; arrival times leg by leg.
+  - [x] Each leg's intercept is iterated a fixed number of times, in integer maths.
+  - [x] Mission duration shown on the HUD, the map and `/routes`.
+  - [ ] Acceleration and deceleration phases, and optional stops (decelerate at a star).
 - [ ] **Real star catalog by default.** Ship a Gaia/HYG-derived catalog of every star within 50 ly (about 1,500 stars, many of them faint red dwarfs) and record its fingerprint in the genesis block, so nodes can't disagree about it.
 - [ ] **Scale problems with the catalog.** Raise `STARS_PER_PROBLEM` from 24 to 40–60 so optimisation stays hard as phones get better at it.
 - [ ] **Science-weighted targets.** Favour stars with known exoplanets or habitable-zone planets (from the NASA Exoplanet Archive), so routes prioritise worthwhile destinations. Score science value per year of travel.
@@ -45,7 +46,7 @@ Today: planets on circular, flat orbits; Lambert transfers between planets; patc
 
 ## Both coins
 
-- [ ] **Send coins from the app.** The app wallet can receive and mine; add ECDSA signing (secp256k1, as wallet.py does) so it can send transactions to a node too.
+- [x] **Send coins from the app.** The app wallet can receive and mine; add ECDSA signing (secp256k1, as wallet.py does) so it can send transactions to a node too.
 - [ ] **Merge solo chains.** Today a pushed solo chain wins only if it has more work than the node's. Pools of solo miners, or reorganising onto the node's chain while keeping your coins, would avoid losing solo blocks.
 
 - [ ] **Independent expert review.** Have an astrodynamicist check the physics against established tools (NASA's GMAT, ESA's pykep) before claiming results are mission-grade.
@@ -54,7 +55,13 @@ Today: planets on circular, flat orbits; Lambert transfers between planets; patc
 - [ ] **Faster sync and light clients.** Add Merkle trees for transactions, header-first sync, and compact proofs.
 - [ ] **Network security.** HTTPS between nodes, peer limits and rate limiting, signed app releases with a real keystore.
 - [x] **3D map tab.** Star map with mined routes (Pulsarite) and real-orbit mission map (Nebulite), with the rig's live work highlighted.
-  - [ ] Tap a star or planet for details; time slider to watch a mission fly; show star motion once Pulsarite models it.
+  - [x] Tap a star or planet for details; time slider to fly missions and watch stars move.
+
+## Usernames
+
+- [x] Claimed in the coinbase of a mined block; unique per network; switching releases the old name; send coins to a name.
+- [ ] Claim a name without mining (a signed name transaction with a fee), so new users can register before their first block.
+- [ ] Profile data next to names (avatar colour, team), and name expiry for abandoned names.
 
 ## Done
 
@@ -66,3 +73,5 @@ Today: planets on circular, flat orbits; Lambert transfers between planets; patc
 - [x] MAP tab: interactive 3D star map and orbit map
 - [x] Solo mode: both blockchains run inside the app; phone-mined chains are accepted by the Python nodes and can be pushed with `/chain/import`
 - [x] In-app wallet compatible with wallet.py; start scripts for Windows/Mac/Linux; Docker + Caddy cloud deployment
+- [x] First-run setup (username, wallet with backup check, where to mine); on-chain usernames; sending coins (RFC 6979 signatures)
+- [x] Pulsarite: moving stars and probe travel time, scored by mission time

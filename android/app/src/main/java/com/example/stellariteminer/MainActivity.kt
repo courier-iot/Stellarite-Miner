@@ -84,9 +84,14 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        prefs = Prefs(this)
+        if (!prefs.setupDone) {          // first run: the setup flow comes first
+            startActivity(Intent(this, SetupActivity::class.java))
+            finish()
+            return
+        }
         setContentView(R.layout.activity_main)
         actionBar?.hide()   // belt and braces: the theme already has no title bar
-        prefs = Prefs(this)
 
         hashrate = findViewById(R.id.hashrate)
         hashUnit = findViewById(R.id.hashUnit)
@@ -126,8 +131,11 @@ class MainActivity : Activity() {
         tabLedger = findViewById(R.id.tabLedger)
         tabMap = findViewById(R.id.tabMap)
         mapPage = findViewById(R.id.mapPage)
-        map = MapPage(this, findViewById(R.id.map3d), findViewById(R.id.mapTitle), findViewById(R.id.mapLegend))
-        ledger = LedgerPage(findViewById(R.id.ledgerContent), Ledger.get(filesDir))
+        map = MapPage(this, findViewById(R.id.map3d), findViewById(R.id.mapTitle), findViewById(R.id.mapLegend),
+            findViewById(R.id.mapInfo), findViewById(R.id.timeRow), findViewById(R.id.timeLabel), findViewById(R.id.timeSlider))
+        ledger = LedgerPage(findViewById(R.id.ledgerContent), Ledger.get(filesDir)) {
+            startActivity(Intent(this, SetupActivity::class.java))
+        }
 
         Theme.applyFonts(window.decorView)
         findViewById<Map3DView>(R.id.map3d).setTypeface(Theme.monoTypeface(this))
@@ -163,6 +171,7 @@ class MainActivity : Activity() {
             refreshBalance(force = true)
         }
         findViewById<Button>(R.id.newWallet).setOnClickListener { newWallet() }
+        findViewById<Button>(R.id.sendCoins).setOnClickListener { sendCoins() }
         findViewById<Button>(R.id.backupKey).setOnClickListener { backupKey() }
         findViewById<Button>(R.id.importKey).setOnClickListener { importKey() }
         findViewById<Button>(R.id.pushChain).setOnClickListener { pushChain() }
@@ -176,11 +185,13 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        if (!::toggle.isInitialized) return   // finishing on first run (setup shown instead)
         handler.post(refresh)
     }
 
     override fun onPause() {
         handler.removeCallbacks(refresh)
+        if (!::toggle.isInitialized) { super.onPause(); return }
         saveSettings()
         super.onPause()
     }
@@ -471,6 +482,75 @@ class MainActivity : Activity() {
             .show()
     }
 
+    /** Send coins to an address or a username, signed on this phone and submitted to the node. */
+    private fun sendCoins() {
+        saveSettings()
+        val c = prefs.coin
+        if (!prefs.wallet.hasKey()) { showAlert("Make or import a wallet first ([NEW WALLET] or [IMPORT KEY]).", user); return }
+        if (prefs.isSolo) {
+            showAlert("Solo chains only hold mined blocks. To send ${c.ticker}, push your solo chain to a node " +
+                "([PUSH CHAIN TO NODE]), turn SOLO MODE off, then send.", soloMode); return
+        }
+        val nodeUrl = prefs.url(c.id)
+        if (nodeUrl.isBlank()) { showAlert("Sending needs a node: set NODE_URI first.", url); return }
+        val me = prefs.wallet.address(c.addressPrefix)!!
+        val d = resources.displayMetrics.density
+        val form = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((20 * d).toInt(), (8 * d).toInt(), (20 * d).toInt(), 0)
+        }
+        val to = EditText(this).apply { hint = "Username or ${c.addressPrefix}… address" }
+        val amount = EditText(this).apply { hint = "Amount (${c.ticker})"; inputType = 0x2002 }  // decimal number
+        val fee = EditText(this).apply { setText("0.00001"); hint = "Fee (${c.ticker})"; inputType = 0x2002 }
+        listOf(to, amount, fee).forEach { form.addView(it) }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Send ${c.ticker}")
+            .setMessage("From $me")
+            .setView(form)
+            .setPositiveButton("Send") { _, _ ->
+                val amt = toUnits(amount.text.toString()); val f = toUnits(fee.text.toString())
+                val dest = to.text.toString().trim()
+                if (amt == null || amt <= 0 || f == null || f < 1000 || dest.isEmpty()) {
+                    showAlert("Check the send form: a recipient, an amount above 0 and a fee of at least 0.00001.", user)
+                    return@setPositiveButton
+                }
+                testResult.text = "> SENDING…"
+                Thread {
+                    val msg = try { submitTransfer(nodeUrl, c, me, dest, amt, f) } catch (e: Exception) {
+                        "SEND FAILED · ${friendlyError(e, nodeUrl)}"
+                    }
+                    runOnUiThread { testResult.text = "> $msg"; refreshBalance(force = true) }
+                }.start()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun toUnits(text: String): Long? = try {
+        java.math.BigDecimal(text.trim()).movePointRight(8).longValueExact()
+    } catch (e: Exception) { null }
+
+    /** Resolves the recipient, signs, and posts the transaction. Runs off the main thread. */
+    private fun submitTransfer(nodeUrl: String, c: CoinProfile, me: String, dest: String, amt: Long, fee: Long): String {
+        val http = NodeClient(nodeUrl)
+        val toAddr = if (Wallet.isValidAddress(dest, c.addressPrefix)) dest else {
+            val (code, body) = http.request("GET", "/name/" + java.net.URLEncoder.encode(dest.uppercase(Locale.US), "UTF-8"), null)
+            if (code != 200) return "SEND FAILED · ${body.optString("error", "unknown recipient $dest")}"
+            body.getString("address")
+        }
+        val (bc, bal) = http.request("GET", "/balance/$me", null)
+        if (bc != 200) return "SEND FAILED · couldn't read your balance from the node"
+        if (bal.getLong("balance") < amt + fee) {
+            return "SEND FAILED · not enough ${c.ticker}: you have ${Format.coins(bal.getLong("balance"), 100_000_000L, 8)}"
+        }
+        val tx = prefs.wallet.signTransaction(toAddr, amt, fee, bal.getLong("next_nonce"))
+        val (code, body) = http.request("POST", "/tx", tx)
+        return if (code == 200 && body.optBoolean("ok")) {
+            "SENT ${Format.coins(amt, 100_000_000L, 8)} ${c.ticker} to ${if (toAddr == dest) dest.take(14) + "…" else dest.uppercase(Locale.US)}. " +
+                "It's final once the next block is mined. txid ${body.optString("txid").take(12)}…"
+        } else "SEND FAILED · ${body.optString("error", "HTTP $code")}"
+    }
+
     private fun pushChain() {
         saveSettings()
         val c = prefs.coin
@@ -611,7 +691,8 @@ class MainActivity : Activity() {
             route.visibility = View.GONE
         }
         block.text = if (s.height > 0) "BLK#%05d".format(s.height % 100_000) else "BLK#—"
-        sysStatus.text = if (running) "SYS.OK\nLINK ▲ ${s.ticker}" else "SYS.OK\nLINK —"
+        val op = prefs.username.ifEmpty { "—" }
+        sysStatus.text = if (running) "OP $op\nLINK ▲ ${s.ticker}" else "OP $op\nLINK —"
         found.text = "%02d".format(s.accepted)
         rejected.text = "%02d".format(s.rejected)
         if (prefs.coin.protocol == Protocol.STRATUM) {

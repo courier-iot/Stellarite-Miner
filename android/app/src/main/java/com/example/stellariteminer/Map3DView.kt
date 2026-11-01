@@ -17,7 +17,8 @@ import kotlin.math.sin
 
 /** A dot in the 3D map. */
 class MapPoint(val x: Double, val y: Double, val z: Double, val color: Int, val radiusDp: Float,
-               val label: String? = null, val alwaysLabel: Boolean = false, val glow: Boolean = false)
+               val label: String? = null, val alwaysLabel: Boolean = false, val glow: Boolean = false,
+               val info: String? = null, val key: String? = null)
 
 /** A polyline in the 3D map. */
 class MapLine(val pts: List<DoubleArray>, val color: Int, val widthDp: Float, val alpha: Int = 255,
@@ -40,6 +41,12 @@ class Map3DView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? = n
     private var pitch = 1.05            // radians from looking straight down
     private var zoom = 1.0
     private var lastTouch = 0L
+
+    /** Called with the tapped point (or null when tapping empty space). */
+    var onPick: ((MapPoint?) -> Unit)? = null
+    /** Key of the selected point, drawn with a ring; survives scene rebuilds. */
+    var selectedKey: String? = null
+    private var lastProjected: List<Pair<MapPoint, FloatArray>> = emptyList()
 
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -129,7 +136,12 @@ class Map3DView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? = n
         // points, far to near
         val proj = points.map { p -> project(p.x, p.y, p.z); Triple(p, floatArrayOf(out[0], out[1]), out[2]) }
             .sortedBy { it.third }
+        lastProjected = proj.map { it.first to it.second }
         for ((p, xy, _) in proj) {
+            if (p.key != null && p.key == selectedKey) {
+                linePaint.color = Theme.AMBER; linePaint.alpha = 255; linePaint.strokeWidth = 1.5f * d; linePaint.pathEffect = null
+                canvas.drawCircle(xy[0], xy[1], p.radiusDp * d + 7 * d, linePaint)
+            }
             if (p.glow) {
                 dotPaint.color = p.color; dotPaint.alpha = 70
                 canvas.drawCircle(xy[0], xy[1], p.radiusDp * d * 2.6f, dotPaint)
@@ -154,7 +166,7 @@ class Map3DView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? = n
         }
 
         // slow auto-rotation when idle
-        if (System.currentTimeMillis() - lastTouch > 4000) {
+        if (System.currentTimeMillis() - lastTouch > 4000 && selectedKey == null) {
             yaw += 0.0025
             postInvalidateOnAnimation()
         }
@@ -178,6 +190,15 @@ class Map3DView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? = n
 
     private val gestures = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
         override fun onDoubleTap(e: MotionEvent): Boolean { resetView(); return true }
+        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+            val hit = lastProjected.filter { it.first.info != null }
+                .minByOrNull { (_, xy) -> (xy[0] - e.x) * (xy[0] - e.x) + (xy[1] - e.y) * (xy[1] - e.y) }
+            val near = hit != null && Math.hypot((hit.second[0] - e.x).toDouble(), (hit.second[1] - e.y).toDouble()) < 30 * d
+            selectedKey = if (near) hit!!.first.key else null
+            onPick?.invoke(if (near) hit!!.first else null)
+            invalidate()
+            return true
+        }
     })
 
     override fun onTouchEvent(e: MotionEvent): Boolean {

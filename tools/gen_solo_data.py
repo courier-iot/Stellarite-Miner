@@ -58,6 +58,9 @@ def main():
     xs = ", ".join(str(s["x"]) for s in stars.CATALOG)
     ys = ", ".join(str(s["y"]) for s in stars.CATALOG)
     zs = ", ".join(str(s["z"]) for s in stars.CATALOG)
+    vxs = ", ".join(str(s["vx"]) for s in stars.CATALOG)
+    vys = ", ".join(str(s["vy"]) for s in stars.CATALOG)
+    vzs = ", ".join(str(s["vz"]) for s in stars.CATALOG)
     pul = consts(PC, PC.ROUTE_BONUS_EXPONENT)
 
     NC, T = load("nebulite", "config", "trajectory")
@@ -91,6 +94,14 @@ object SoloData {{
     val STAR_X = longArrayOf({xs})
     val STAR_Y = longArrayOf({ys})
     val STAR_Z = longArrayOf({zs})
+    /** Star velocities in mly per 1000 years. */
+    val STAR_VX = longArrayOf({vxs})
+    val STAR_VY = longArrayOf({vys})
+    val STAR_VZ = longArrayOf({vzs})
+    /** The probe: speed (mly per year), launch time (milli-years after J2000), intercept iterations. */
+    const val PROBE_SPEED = {stars.SPEED}L
+    const val LAUNCH_T = {stars.LAUNCH_T}L
+    const val INTERCEPT_ITERATIONS = {stars.INTERCEPT_ITERATIONS}
 
     /** Nebulite planet orbits and physics (same JSON the node serves at /planets). */
     const val NEBULITE_MODEL_JSON = {kstr(model_json)}

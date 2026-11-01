@@ -13,7 +13,7 @@ import time
 import urllib.error
 import urllib.request
 
-from route_opt import optimise
+from route_opt import mission_time, optimise, polish
 
 REFRESH_SECONDS = 10   # fetch fresh work this often so we notice new blocks
 ROUTE_SECONDS = 2      # time spent optimising each block's route
@@ -56,9 +56,13 @@ def main():
         work = call(f"{node}/mining/work?address={args.address}")
         if "job_id" not in work:
             raise SystemExit(f"Node refused work: {work}")
-        pts = [(s["x"], s["y"], s["z"]) for s in work["stars"]]
-        order = optimise(pts, seconds=args.route_seconds)
+        # Plan on star positions mid-mission, then polish against the exact moving-star timing.
+        t_mid = work["launch_t"] + int(work["baseline_years"] * 500)
+        pts = [(s["x"] + s["vx"] * t_mid // 1_000_000, s["y"] + s["vy"] * t_mid // 1_000_000,
+                s["z"] + s["vz"] * t_mid // 1_000_000) for s in work["stars"]]
+        order = optimise(pts, seconds=args.route_seconds * 0.6)
         route = [work["stars"][i]["id"] for i in order]
+        route = polish(route, lambda r: mission_time(r, work), args.route_seconds * 0.4)
         scored = call(f"{node}/mining/route", {"job_id": work["job_id"], "route": route})
         if "prefix" not in scored:
             print("Route refused:", scored.get("error"))
@@ -68,8 +72,8 @@ def main():
         nonce, tried = search(prefix, target, int.from_bytes(os.urandom(8), "big") >> 2,
                               t0 + REFRESH_SECONDS)
         rate = tried / max(time.time() - t0, 1e-6)
-        route_txt = (f"route {scored['length_ly']:.1f} ly vs baseline {scored['baseline_ly']:.1f} ly "
-                     f"({scored['improvement_pct']:+.1f}% shorter)")
+        route_txt = (f"mission {scored['years']:,.0f} yr vs greedy {scored['baseline_years']:,.0f} yr "
+                     f"({scored['improvement_pct']:+.1f}% faster, {scored['length_ly']:.0f} ly flown)")
         if nonce is None:
             print(f"height {work['height']}: {route_txt}, {rate/1000:.0f} kH/s, refreshing")
             continue

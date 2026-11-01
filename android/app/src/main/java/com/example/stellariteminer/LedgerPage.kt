@@ -12,7 +12,7 @@ import java.util.Date
 import java.util.Locale
 
 /** Builds the LEDGER screen: lifetime totals per coin, then recent sessions. */
-class LedgerPage(private val container: LinearLayout, private val ledger: Ledger) {
+class LedgerPage(private val container: LinearLayout, private val ledger: Ledger, private val onRunSetup: () -> Unit = {}) {
     private val ctx: Context = container.context
     private val dateFmt = SimpleDateFormat("MMM dd HH:mm", Locale.US)
 
@@ -27,6 +27,7 @@ class LedgerPage(private val container: LinearLayout, private val ledger: Ledger
         if (totals.isEmpty()) {
             container.addView(text("> NO SESSIONS ON RECORD.\n> ENGAGE THE RIG TO START YOUR LEDGER.",
                 13f, Theme.MUTED, top = 28f))
+            container.addView(setupButton())
             Theme.applyFonts(container)
             return
         }
@@ -45,6 +46,7 @@ class LedgerPage(private val container: LinearLayout, private val ledger: Ledger
             setOnClickListener { confirmWipe() }
         }
         container.addView(reset, LinearLayout.LayoutParams(-2, dp(48f)).apply { topMargin = dp(16f) })
+        container.addView(setupButton())
         Theme.applyFonts(container)
     }
 
@@ -76,7 +78,7 @@ class LedgerPage(private val container: LinearLayout, private val ledger: Ledger
             "EARNED" to earned,
         )
         if (kind == WorkKind.STAR_ROUTES && t.bestGainPct > 0) {
-            rows.add(3, "BEST_ROUTE" to String.format(Locale.US, "%.1f%% shorter than greedy", t.bestGainPct))
+            rows.add(3, "BEST_ROUTE" to String.format(Locale.US, "%.1f%% faster than greedy", t.bestGainPct))
         }
         if (kind == WorkKind.TRAJECTORIES && t.bestGainPct > 0) {
             rows.add(3, "BEST_MISSION" to String.format(Locale.US, "%.1f%% cheaper than direct", t.bestGainPct))
@@ -110,6 +112,15 @@ class LedgerPage(private val container: LinearLayout, private val ledger: Ledger
             "+${Format.coins(s.earnedUnits, s.unitsPerCoin, 2)}" else "${s.accepted} ${s.unit}"
         addView(text(right, 13f, if (s.accepted > 0) Theme.AMBER else Theme.MUTED))
         layoutParams = LinearLayout.LayoutParams(-1, -2)
+    }
+
+    private fun setupButton() = Button(ctx, null, android.R.attr.borderlessButtonStyle).apply {
+        text = "[RUN SETUP AGAIN]"
+        setTextColor(Theme.AMBER)
+        textSize = 12f
+        letterSpacing = 0.15f
+        setOnClickListener { onRunSetup() }
+        layoutParams = LinearLayout.LayoutParams(-2, dp(48f))
     }
 
     private fun confirmWipe() {

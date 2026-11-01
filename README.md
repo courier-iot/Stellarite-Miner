@@ -2,7 +2,7 @@
 
 Two small cryptocurrencies built from scratch for learning, where mining does useful space work, plus a cyberpunk-styled Android app that mines them:
 
-- **Pulsarite (PLSR)**: every block maps a short route between real nearby stars.
+- **Pulsarite (PLSR)**: every block plans a probe's route past real nearby stars, which move while it travels.
 - **Nebulite (NBLT)**: every block plans a spacecraft trajectory to an outer planet, using gravity-assist flybys to save fuel and travel time.
 
 **Stellarite Miner** mines both, and can also mine Bitcoin and other SHA-256d coins through mining pools. See [ROADMAP.md](ROADMAP.md) for what's next, including star movement and travel time.
@@ -51,9 +51,15 @@ Pulsarite uses **proof of useful work**. Every block must carry a route that sta
 
 Push this repo to GitHub, open the **Actions** tab, and download `stellarite-miner-apk` from the latest run (or open `android/` in Android Studio and press Run). Install it; Android will ask you to allow installs from that source. The app isn't on Google Play, which doesn't allow on-device mining apps.
 
-### 2. Make a wallet
+### 2. Run the setup
 
-On the RIG tab, pick **PLSR** or **NBLT** and tap **[NEW WALLET]**. Back up the key it shows: anyone with it can spend your coins, and losing it loses them. One key gives you both a `plsr…` and an `nblt…` address, and it's the same format as `wallet.py`, so you can move it to a computer later (the backup screen shows the `wallet.json` to save).
+The first time you open the app, setup walks you through:
+
+1. **Username:** 3–16 characters (A–Z, 0–9, _). It's written into the blocks you mine: your first block claims it on that network, and nobody else can use it there. People can send you coins by name, and the route map and mission log show who mined what.
+2. **Wallet:** create one, or import a key from `wallet.py`. Setup shows your key and won't continue until you type its last 4 characters, to make sure you saved it. One key gives you both a `plsr…` and an `nblt…` address. Your username belongs to your address, so restoring the key restores the name.
+3. **Where the blockchain runs:** solo on the phone, your computer, or a cloud server (see below).
+
+You can run setup again from the LEDGER tab.
 
 ### 3. Choose where the blockchain runs
 
@@ -72,7 +78,11 @@ The app mines as a foreground service with a visible notification and a Stop but
 - the battery is below 20% and unplugged,
 - "Only mine while charging" is on (the default) and the phone is unplugged.
 
-It uses half the CPU cores by default; you can change that with the CORES slider. The RIG tab shows your balance under the wallet address, from the solo chain or from the node.
+It uses half the CPU cores by default; you can change that with the CORES slider. The RIG tab shows your balance under the wallet address, from the solo chain or from the node, and your username in the top corner.
+
+### Sending coins
+
+Tap **[SEND]** under your wallet address, then enter a username (e.g. `ORBIT`) or an address, an amount and a fee (0.00001 minimum). The app signs the transaction on the phone, so your key never leaves it, and the node includes it in the next block. Sending needs a node; solo chains hold mined blocks only.
 
 ### Running a node by hand (optional)
 
@@ -88,25 +98,27 @@ python miner.py --address plsr…   # mine from the computer too
 
 ## Useful work: star routes
 
-**The problem.** Each block's 24 stars are picked from the previous block's hash, so nobody can work on a block's route before that block exists. The route is an open path: it starts at the Sun and visits every star once. Distances are computed in whole milli-light-years so every node gets the exact same answer.
+**The problem.** Each block's 24 stars are picked from the previous block's hash, so nobody can work on a block's route before that block exists. A probe launches from the Sun in **2100**, cruises at **10% of light speed**, and must fly past every star once.
 
-**The score.** Every node computes a greedy "nearest star next" route as the baseline. If your route is 10% shorter, your hash target is (1/0.9)¹² ≈ 3.5× easier. In testing, the optimiser beats the baseline by about 11% on average (up to ~20%), making blocks around 6× easier to find. A miner who only hashes, without optimising, is at a real disadvantage.
+**Stars move.** Every star has a space velocity (proper motion plus radial velocity). Over a mission lasting thousands of years they drift noticeably: Barnard's Star moves about half a light-year per thousand years. Each leg aims at where the star *will be* when the probe arrives, solved by iterating the intercept.
 
-**Why keep hashing at all?** Route quality alone can't set a steady block time, and the best route for a block would quickly become a known answer that every miner submits. The hash keeps blocks unpredictable and lets difficulty adjust; the route bonus makes optimisation the thing that wins.
+**The score is mission time.** Every node computes a greedy route ("fly to whichever star you can reach soonest") as the baseline. A route 10% faster makes the hash target (1/0.9)¹² ≈ 3.5× easier. In testing, optimised routes were about 13% faster than greedy (6–24%), for missions of roughly 2,000–4,000 years. Everything (positions, velocities, times) is whole-number arithmetic, so every node and phone computes identical results; the app's timing matches the node's on 200 of 200 test routes.
 
-**On the phone.** The rig optimises each new block's route for about 2.5 seconds (2-opt and Or-opt with random restarts), starts hashing, then keeps refining the route every 10 seconds. The RIG screen shows the live route, e.g. `ROUTE 24★ · 218.6 LY · 11.8% SHORTER THAN GREEDY`, and the ledger records routes mapped and your best route.
+**Why keep hashing at all?** Route quality alone can't set a steady block time, and the best route for a block would quickly become a known answer. The hash keeps blocks unpredictable and lets difficulty adjust; the route bonus makes optimisation the thing that wins.
 
-**The map.** `GET /routes` lists recent blocks' routes by star name with their lengths and improvement, and `GET /stars` shows the catalog in use.
+**On the phone.** The rig plans each new block's route for about 2.5 seconds (a fast optimiser on mid-mission star positions, then an exact polish scored by true mission time), starts hashing, then keeps refining every 10 seconds. The RIG screen shows the live route, e.g. `ROUTE 24★ · 2,873 YR · 287 LY · 14.6% FASTER THAN GREEDY`.
 
-**Using real star data.** The built-in catalog has ~50 well-known nearby systems with approximate positions. For a serious network, build a catalog from the HYG database (positions from the Hipparcos and Gaia surveys):
+**The map.** `GET /routes` lists recent routes by star name with mission time, distance flown, improvement and the miner's username. `GET /stars` shows the catalog with velocities.
+
+**Using real star data.** The built-in catalog has ~50 well-known nearby systems with approximate positions and motions. For a serious network, build a catalog from the HYG database (positions and velocities from the Hipparcos and Gaia surveys):
 
 ```bash
 python tools/build_catalog.py hygdata_v41.csv --max-ly 50 -o stars.json
 ```
 
-Every node must use the same catalog (`GET /info` shows a `catalog_id` to compare), and changing it starts a new chain, so delete each node's `data/` folder. With a larger catalog you can raise `STARS_PER_PROBLEM` for harder, more useful routing problems.
+Every node must use the same catalog (`GET /info` shows a `catalog_id` to compare), and changing it starts a new chain. Afterwards, run `python tools/gen_solo_data.py` so the app's solo mode matches, then rebuild the app.
 
-**Be honest about the value.** Today these routes are a demonstration: real mission planning has to account for travel time, fuel and star motion, not just straight-line distance. The point is the framework. The network turns mining effort into solved routing problems that anyone can check, and the problem can be swapped for something richer later.
+**Limits.** The probe flies past stars at constant speed: no acceleration, deceleration or stops yet, and gravity is ignored. ROADMAP.md lists these as next steps.
 
 ## Mining other coins (Bitcoin and friends)
 
@@ -191,6 +203,10 @@ Nodes forward new blocks and transactions to each other and re-sync every 30 sec
 | GET | `/routes?limit=20` | the route map: recent blocks' routes, lengths, improvement |
 | GET | `/stars` | the star catalog in use |
 | POST | `/chain/import` | offer a whole chain (e.g. from solo mode); adopted if valid and longer |
+| GET | `/name/<name>` | the address that owns a username |
+| GET | `/names` | every claimed username |
+
+`GET /mining/work` takes an optional `&name=` to claim a username in the block's coinbase; `/balance/<address>` includes the address's `name`.
 
 Nebulite's node has the same transaction, balance, chain and peer endpoints, plus `GET /mining/work`, `POST /mining/trajectory` (`{job_id, seq, days}`), `POST /mining/submit` (`{job_id, seq, days, nonce}`), `GET /missions` and `GET /planets` (orbital elements and physics constants).
 | GET/POST | `/peers` | list / add peers |
@@ -244,7 +260,10 @@ Each leg between planets is solved with Lambert's problem, the standard tool for
 
 ## The MAP tab
 
-A rotating 3D map of the useful work. Drag to rotate, pinch to zoom (star names appear as you zoom in), double-tap to reset.
+A rotating 3D map of the useful work. Drag to rotate, pinch to zoom (star names appear as you zoom in), double-tap to reset. **Tap** any star, planet or encounter for details: distance, speed, orbit, flyby dates. The **time slider** flies the live plan (or the latest mined one):
+
+- Pulsarite: the probe moves along the route while every star drifts to where it really is that year; visited stars turn amber.
+- Nebulite: the spacecraft follows its real trajectory while the planets move on their orbits.
 
 - **PLSR, star map:** every catalog star around the Sun with distance rings at 10, 20, 30 and 40 light-years. Recently mined routes are drawn in crimson, and the route your rig is optimising right now is drawn in amber, with its stars highlighted.
 - **NBLT, orbit map:** the planets' real orbits, with distances compressed so Mercury and Neptune both fit on screen. Recently mined missions are in crimson, and your rig's live mission plan is in amber, with each encounter labelled (e.g. `FLYBY JUPITER 2041`).

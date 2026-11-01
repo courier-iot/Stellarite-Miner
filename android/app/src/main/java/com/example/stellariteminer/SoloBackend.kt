@@ -10,19 +10,19 @@ import java.io.File
  * Uses the same useful-work optimisers as node mining and the same block rules,
  * so the chain can later be pushed to a computer or cloud node.
  */
-class SoloBackend(private val chain: SoloChain, private val address: String) : PoolBackend {
+class SoloBackend(private val chain: SoloChain, private val address: String, private val name: String = "") : PoolBackend {
     override val unitName = "blocks"
 
     private class Extra(val template: SoloChain.Template, val value: Any)
 
     private var problemKey = ""
-    private var routeOpt: RouteOptimizer? = null
-    private var routeIds: IntArray = IntArray(0)
+    private var routePlanner: MovingRoutePlanner? = null
+    private var routeField: StarField? = null
     private var trajOpt: TrajectoryOptimizer? = null
     private var trajModel: TrajectoryModel? = null
 
     override fun getWork(): Job {
-        val t = chain.template(address)
+        val t = chain.template(address, name)
         val fresh = t.prev != problemKey
         problemKey = t.prev
         val budget = if (fresh) FIRST_MS else REFINE_MS
@@ -41,21 +41,19 @@ class SoloBackend(private val chain: SoloChain, private val address: String) : P
     }
 
     private fun routeWork(u: StarRouteRules, t: SoloChain.Template, fresh: Boolean, ms: Long): Pair<Any, UsefulWork> {
-        if (fresh || routeOpt == null) {
-            routeIds = u.problem(t.prev).toIntArray()
-            routeOpt = RouteOptimizer(
-                DoubleArray(routeIds.size) { SoloData.STAR_X[routeIds[it]].toDouble() },
-                DoubleArray(routeIds.size) { SoloData.STAR_Y[routeIds[it]].toDouble() },
-                DoubleArray(routeIds.size) { SoloData.STAR_Z[routeIds[it]].toDouble() },
-            )
+        if (fresh || routePlanner == null) {
+            val f = StarField.fromCatalog(u.problem(t.prev))
+            routeField = f
+            routePlanner = MovingRoutePlanner(f)
         }
-        val opt = routeOpt!!
+        val f = routeField!!
+        val opt = routePlanner!!
         opt.improve(ms)
-        val route = opt.best.map { routeIds[it] }
-        val length = u.length(route)
-        val base = u.length(u.baseline(routeIds.toList()))
-        return JSONArray(route) to RouteInfo(route, length / 1000.0, base / 1000.0,
-            Math.round(10000.0 * (1 - length.toDouble() / base)) / 100.0)
+        val route = opt.best.map { f.ids[it] }
+        val time = opt.bestTime
+        val base = f.time(f.baseline())
+        return JSONArray(route) to RouteInfo(route, time / 1000.0, base / 1000.0,
+            Math.round(10000.0 * (1 - time.toDouble() / base)) / 100.0, f.length(opt.best) / 1000.0)
     }
 
     private fun trajectoryWork(u: TrajectoryRules, t: SoloChain.Template, fresh: Boolean, ms: Long): Pair<Any, UsefulWork> {
@@ -119,10 +117,12 @@ class SoloBackend(private val chain: SoloChain, private val address: String) : P
             for (b in chain.blocks.drop(1).takeLast(limit).reversed()) {
                 val r = b.getJSONArray("route")
                 val ids = List(r.length()) { r.getInt(it) }
-                val len = u.length(ids); val base = u.length(u.baseline(ids))
+                val t = u.time(ids); val base = u.time(u.baseline(ids))
                 out.put(JSONObject().put("height", b.getLong("height")).put("route_ids", JSONArray(ids))
-                    .put("length_ly", len / 1000.0).put("baseline_ly", base / 1000.0)
-                    .put("improvement_pct", Math.round(10000.0 * (1 - len.toDouble() / base)) / 100.0))
+                    .put("years", t / 1000.0).put("baseline_years", base / 1000.0)
+                    .put("length_ly", u.length(ids) / 1000.0)
+                    .put("miner_name", b.getJSONArray("txs").getJSONObject(0).optString("name", ""))
+                    .put("improvement_pct", Math.round(10000.0 * (1 - t.toDouble() / base)) / 100.0))
             }
             return out
         }
