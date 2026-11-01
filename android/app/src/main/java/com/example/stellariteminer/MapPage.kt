@@ -184,6 +184,11 @@ class MapPage(
             BooleanArray(n) { ids[it] in stopIds })
     }
 
+    private fun intList(a: JSONArray?): List<Int> = a?.let { arr -> List(arr.length()) { arr.getInt(it) } } ?: emptyList()
+    /** Mined blocks' speeds (% of c); rows from older nodes have none, so assume the top speed. */
+    private fun speedsFor(ids: Int, a: JSONArray?) = intList(a).let { l -> IntArray(ids) { l.getOrElse(it) { StarField.MAX_PCT } } }
+    private var focusSpeeds = IntArray(0)
+
     private fun idSet(a: JSONArray?): Set<Int> = a?.let { arr -> (0 until arr.length()).map { arr.getInt(it) }.toSet() } ?: emptySet()
 
     private fun buildStars() {
@@ -198,9 +203,10 @@ class MapPage(
         focusIds = live ?: newest?.optJSONArray("route_ids")?.let { a -> List(a.length()) { a.getInt(it) } } ?: emptyList()
         focusStops = liveWork?.stopIds?.toSet() ?: idSet(newest?.optJSONArray("stop_ids"))
         focusLabel = if (live != null) "LIVE ROUTE" else if (newest != null) "BLOCK ${newest.getInt("height")} ROUTE" else ""
+        focusSpeeds = liveWork?.speedsPct?.toIntArray() ?: speedsFor(focusIds.size, newest?.optJSONArray("speeds_pct_c"))
         focusLegs = if (focusIds.isEmpty()) emptyList() else {
             val order = IntArray(focusIds.size) { index[focusIds[it]] ?: 0 }
-            catalogField(cat, probe!!, focusStops).legs(order)
+            catalogField(cat, probe!!, focusStops).legs(order, focusSpeeds)
         }
 
         // Mined routes, drawn through each flyby's intercept point (where the star was when the probe passed).
@@ -209,7 +215,8 @@ class MapPage(
             val ids = rs.getJSONObject(i).optJSONArray("route_ids") ?: continue
             val order = IntArray(ids.length()) { index[ids.getInt(it)] ?: 0 }
             val rf = catalogField(cat, probe!!, idSet(rs.getJSONObject(i).optJSONArray("stop_ids")))
-            val pts = listOf(doubleArrayOf(0.0, 0.0, 0.0)) + rf.legs(order).map { ly(it.at) }
+            val sp = speedsFor(order.size, rs.getJSONObject(i).optJSONArray("speeds_pct_c"))
+            val pts = listOf(doubleArrayOf(0.0, 0.0, 0.0)) + rf.legs(order, sp).map { ly(it.at) }
             lines += MapLine(pts, Theme.CRIMSON, if (i == 0 && live == null) 1.6f else 1f, if (i == 0) 170 else 60)
         }
         if (live != null) {
@@ -218,12 +225,12 @@ class MapPage(
         staticLines = lines
         legendBase = buildString {
             append("> ${cat.length()} STARS (MOVING) · ${rs.length()} MINED ROUTES (CRIMSON)")
-            if (newest != null) append(String.format(Locale.US, "\n> LATEST: BLOCK %d · %,.0f YR · %.1f%% FASTER%s",
-                newest.getInt("height"), newest.optDouble("years", 0.0), newest.getDouble("improvement_pct"),
+            if (newest != null) append(String.format(Locale.US, "\n> LATEST: BLOCK %d · %,.0f YR · FUEL %.0f%% · %.1f%% FASTER%s",
+                newest.getInt("height"), newest.optDouble("years", 0.0), newest.optDouble("fuel_used_pct", 0.0), newest.getDouble("improvement_pct"),
                 newest.optString("miner_name", "").let { if (it.isNotEmpty() && it != "null") " · BY $it" else "" }))
             val w = shownWork as? RouteInfo
-            if (live != null && w != null) append(String.format(Locale.US, "\n> LIVE ROUTE (AMBER): %,.0f YR · %d SURVEY STOPS (◆)", w.years, w.stopIds.size))
-            else if (focusStops.isNotEmpty()) append("\n> ${focusStops.size} SURVEY STOPS (◆): THE PROBE BRAKES TO A HALT THERE")
+            if (live != null && w != null) append(String.format(Locale.US, "\n> LIVE ROUTE (AMBER): %,.0f YR · %d SURVEY STOPS (◆) · FUEL %.0f%%", w.years, w.stopIds.size, w.fuelUsedPct))
+            else if (focusStops.isNotEmpty()) append("\n> ${focusStops.size} SURVEY STOPS (◆): THE PROBE BRAKES TO A HALT AND SURVEYS FOR ${SoloData.SURVEY_YEARS} YEARS")
             if (focusLegs.isNotEmpty()) append("\n> SLIDE TO FLY THE $focusLabel · TAP A STAR FOR DETAILS")
             else append("\n> TAP A STAR FOR DETAILS · DRAG TO ROTATE · PINCH TO ZOOM")
         }
@@ -235,7 +242,7 @@ class MapPage(
     private fun drawStarsAt() {
         val f = field ?: return
         val start = f.launchT
-        val end = focusLegs.lastOrNull()?.t ?: start
+        val end = focusLegs.lastOrNull()?.depart ?: start
         val t = start + ((end - start) * timeF).toLong()
         val flyby = HashMap<Int, StarField.Leg>().apply { focusLegs.forEach { l -> put(f.ids[l.star], l) } }
 
@@ -260,7 +267,9 @@ class MapPage(
                     val stop = id in focusStops
                     append(String.format(Locale.US, "\nProbe %s: %s (star %d of %d)", if (stop) "arrives and stops" else "flyby",
                         yearText(leg.t), focusLegs.indexOf(leg) + 1, focusLegs.size))
-                    if (stop) append("\nSURVEY STOP: the probe brakes to rest here (10 years from 0.1c)")
+                    append(String.format(Locale.US, "\nLeg cruise speed: %d%% of light speed · fuel used on this leg: %.1f%% of c",
+                        leg.pctC, leg.dv / 10_000.0))
+                    if (stop) append("\nSURVEY STOP: the probe brakes to rest and surveys until ${yearText(leg.depart)}")
                     else append(String.format(Locale.US, "\nPasses at %.1f%% of light speed", leg.speed / 10_000.0))
                 }
             }
@@ -275,6 +284,7 @@ class MapPage(
             var prevT = start; var prev = longArrayOf(0, 0, 0)
             var at = ly(focusLegs.last().at)
             var heading: StarField.Leg? = null
+            var surveying: StarField.Leg? = null
             for (l in focusLegs) {
                 if (t <= l.t) {
                     heading = l
@@ -283,16 +293,20 @@ class MapPage(
                         (prev[2] + (l.at[2] - prev[2]) * frac) / 1000)
                     break
                 }
-                prevT = l.t; prev = l.at
+                if (t < l.depart) { surveying = l; at = ly(f.pos(l.star, t)); break }   // parked with the star
+                prevT = l.depart; prev = l.leaveAt
             }
-            val done = focusLegs.count { it.t <= t }
-            val next = heading?.let { h ->
-                val nm = stars!!.getJSONObject(h.star).getString("name")
-                if (f.ids[h.star] in focusStops) "\nHeading for $nm to stop and survey it" else "\nHeading for a flyby of $nm"
-            } ?: "\nMission complete"
+            val done = focusLegs.count { it.depart <= t }
+            val fuel = focusLegs.filter { it.t <= t }.sumOf { it.dv } * 100.0 / f.dvBudget
+            val next = surveying?.let { "\nSurveying ${stars!!.getJSONObject(it.star).getString("name")} until ${yearText(it.depart)}" }
+                ?: heading?.let { h ->
+                    val nm = stars!!.getJSONObject(h.star).getString("name")
+                    (if (f.ids[h.star] in focusStops) "\nHeading for $nm to stop and survey it" else "\nHeading for a flyby of $nm") +
+                        " at ${h.pctC}% of light speed"
+                } ?: "\nMission complete"
             points += MapPoint(at[0], at[1], at[2], 0xFFFFFFFF.toInt(), 3.5f, "PROBE", alwaysLabel = true, glow = true,
                 info = "PROBE\n${yearText(t)} · ${done} of ${focusLegs.size} stars done$next\n" +
-                    "Speeds up to 10% of light speed in 10 years; brakes the same way at survey stops", key = "probe")
+                    String.format(Locale.US, "Fuel used: %.0f%% of the tank", fuel), key = "probe")
         }
         view.setScene(points, staticLines, listOf(10.0, 20.0, 30.0, 40.0), "LY")
         timeLabel.text = yearText(t)

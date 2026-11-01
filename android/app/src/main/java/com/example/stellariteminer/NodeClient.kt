@@ -44,10 +44,12 @@ class NodeClient(baseUrl: String, private val address: String = "", private val 
         val opt = planner!!
         opt.improve(if (fresh) FIRST_ROUTE_MS else REFINE_ROUTE_MS)
         val route = opt.best.map { f.ids[it] }
+        val speeds = opt.bestSpeeds.toList()
+        val plan = StarRouteRules.Plan(route, speeds).toJson()
 
         // 2. The node scores the route and gives us the header to hash.
         val (rc, scored) = request("POST", "/mining/route",
-            JSONObject().put("job_id", jobId).put("route", JSONArray(route)))
+            JSONObject().put("job_id", jobId).put("route", plan))
         if (rc != 200) throw IOException(scored.optString("error", "HTTP $rc"))
         return Job(
             id = jobId,
@@ -60,13 +62,15 @@ class NodeClient(baseUrl: String, private val address: String = "", private val 
             unitsPerCoin = work.getLong("units_per_coin"),
             work = RouteInfo(route, scored.getDouble("years"), scored.getDouble("baseline_years"),
                 scored.getDouble("improvement_pct"), scored.getDouble("length_ly"),
-                (0 until f.size).filter { f.stop[it] }.map { f.ids[it] }),
+                (0 until f.size).filter { f.stop[it] }.map { f.ids[it] }, speeds,
+                scored.optDouble("fuel_used_pct", 0.0)),
         )
     }
 
     /** [nonce] is kept in 0..Long.MAX_VALUE so it survives JSON as a plain number. */
     override fun submit(job: Job, nonce: Long): SubmitResult {
-        val route = JSONArray((job.work as? RouteInfo)?.starIds ?: emptyList<Int>())
+        val w = job.work as? RouteInfo
+        val route = if (w == null) JSONArray() else StarRouteRules.Plan(w.starIds, w.speedsPct).toJson()
         val payload = JSONObject().put("job_id", job.id).put("route", route).put("nonce", nonce)
         val (code, body) = request("POST", "/mining/submit", payload)
         return if (code == 200 && body.optBoolean("ok")) {

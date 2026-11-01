@@ -129,9 +129,13 @@ LAUNCH_T = (C.LAUNCH_YEAR - 2000) * 1000          # milli-years after J2000
 
 # Kinematics run in finer integer units: distances in micro-light-years (uly),
 # speeds in uly per year, acceleration in uly per year squared, times in milli-years.
-V = SPEED * 1000                                  # cruise speed, uly/yr
+V = SPEED * 1000                                  # top cruise speed, uly/yr
 A = C.PROBE_ACCEL_MLY_PER_YEAR2 * 1000            # acceleration, uly/yr^2
+PCT = V // 10                                     # 1% of light speed, uly/yr
+MAX_PCT = 10                                      # cruise speeds are 1..MAX_PCT % of c
 SURVEY_STOPS = C.SURVEY_STOPS
+SURVEY_T = C.SURVEY_YEARS * 1000                  # milli-years at each stop
+DV_BUDGET = C.DV_BUDGET_PCT_C * PCT               # uly/yr of total speed change
 
 
 def pos(star_id, t=0):
@@ -152,38 +156,48 @@ def distance_uly(a, b) -> int:
     return math.isqrt(((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) * 1_000_000)
 
 
-def leg(d, u, stop):
+def leg(d, u, c, stop):
     """
-    One leg of d uly, starting at speed u (uly/yr). Returns (milli-years, end speed).
+    One leg of d uly, starting at speed u, cruising at c (uly/yr).
+    Returns (milli-years, end speed, delta-v used).
 
-    The probe accelerates at A towards the cruise speed V. For a flyby it keeps
+    The probe speeds up or slows down at A towards c. For a flyby it keeps
     whatever speed it has reached; for a stop it brakes at A to arrive at rest.
-    If it is already too fast to stop in time, it brakes, overshoots, and comes back.
+    If it is too fast to stop in time, it brakes, overshoots, and comes back.
     """
     if not stop:
-        ramp = (V * V - u * u) // (2 * A)                       # distance to reach V
+        if u <= c:
+            ramp = (c * c - u * u) // (2 * A)
+            if d >= ramp:
+                return (c - u) * 1000 // A + (d - ramp) * 1000 // c, c, c - u
+            w = math.isqrt(u * u + 2 * A * d)
+            return (w - u) * 1000 // A, w, w - u
+        ramp = (u * u - c * c) // (2 * A)
         if d >= ramp:
-            return (V - u) * 1000 // A + (d - ramp) * 1000 // V, V
-        w = math.isqrt(u * u + 2 * A * d)
-        return (w - u) * 1000 // A, w
+            return (u - c) * 1000 // A + (d - ramp) * 1000 // c, c, u - c
+        w = math.isqrt(u * u - 2 * A * d)
+        return (u - w) * 1000 // A, w, u - w
     brake = u * u // (2 * A)                                    # distance to stop from u
     if brake >= d:                                              # overshoot, then rest-to-rest back
         e = brake - d
-        return u * 1000 // A + 2 * math.isqrt(e * 1_000_000 // A), 0
-    up, down = (V * V - u * u) // (2 * A), V * V // (2 * A)
+        return u * 1000 // A + 2 * math.isqrt(e * 1_000_000 // A), 0, u + 2 * math.isqrt(A * e)
+    if u > c:                                                   # slow to c, cruise, brake
+        return (u - c) * 1000 // A + c * 1000 // A + (d - brake) * 1000 // c, 0, u
+    up, down = (c * c - u * u) // (2 * A), c * c // (2 * A)
     if up + down <= d:                                          # reaches cruise speed
-        return (V - u) * 1000 // A + V * 1000 // A + (d - up - down) * 1000 // V, 0
-    p = math.isqrt((2 * A * d + u * u) // 2)                    # peak speed short of V
-    return (p - u) * 1000 // A + p * 1000 // A, 0
+        return (c - u) * 1000 // A + c * 1000 // A + (d - up - down) * 1000 // c, 0, 2 * c - u
+    p = math.isqrt((2 * A * d + u * u) // 2)                    # peak speed short of c
+    return (p - u) * 1000 // A + p * 1000 // A, 0, 2 * p - u
 
 
-def intercept(here, t, star_id, u=0, stop=False):
-    """(arrival time, arrival place, speed there) for a probe at `here` at time t, speed u, heading for a moving star."""
-    arrive, speed = t, u
+def intercept(here, t, star_id, u=0, c=V, stop=False):
+    """(arrival time, arrival place, speed there, delta-v) for a probe at `here` at time t, speed u,
+    cruising at c towards a moving star."""
+    arrive, speed, dv = t, u, 0
     for _ in range(INTERCEPT_ITERATIONS):
-        dt, speed = leg(distance_uly(here, pos(star_id, arrive)), u, stop)
+        dt, speed, dv = leg(distance_uly(here, pos(star_id, arrive)), u, c, stop)
         arrive = t + dt
-    return arrive, pos(star_id, arrive), speed
+    return arrive, pos(star_id, arrive), speed, dv
 
 
 def problem(prev_hash: str) -> list:
@@ -212,39 +226,73 @@ def stops(prev_hash: str) -> list:
     return sorted(chosen)
 
 
-def route_legs(route, stop_ids=()):
-    """[(star, arrival time, arrival position, speed there)] for a probe launched from rest at the Sun."""
+def check_plan(plan) -> bool:
+    """A route plan is a list of [star id, cruise speed in % of c] pairs."""
+    return isinstance(plan, list) and all(
+        isinstance(p, list) and len(p) == 2 and all(isinstance(v, int) and not isinstance(v, bool) for v in p)
+        and 1 <= p[1] <= MAX_PCT for p in plan)
+
+
+def route_legs(plan, stop_ids=()):
+    """[(star, arrival time, arrival position, speed there, delta-v, departure time)] for a probe
+    launched from rest at the Sun, flying plan = [[star, cruise %c], ...]."""
     stop_set = set(stop_ids)
     here, t, u, legs = SOL, LAUNCH_T, 0, []
-    for sid in route:
-        t, here, u = intercept(here, t, sid, u, sid in stop_set)
-        legs.append((sid, t, here, u))
+    for sid, pct in plan:
+        stop = sid in stop_set
+        arrive, here, u, dv = intercept(here, t, sid, u, pct * PCT, stop)
+        t = arrive + SURVEY_T if stop else arrive
+        if stop:
+            here = pos(sid, t)                                  # it rides along with the star while surveying
+        legs.append((sid, arrive, here, u, dv, t))
     return legs
 
 
-def route_time(route, stop_ids=()) -> int:
-    """Mission time in milli-years: launch to the last star."""
-    legs = route_legs(route, stop_ids)
-    return (legs[-1][1] if legs else LAUNCH_T) - LAUNCH_T
+def route_time(plan, stop_ids=()) -> int:
+    """Mission time in milli-years: launch until the last star is done (surveys included)."""
+    legs = route_legs(plan, stop_ids)
+    return (legs[-1][5] if legs else LAUNCH_T) - LAUNCH_T
 
 
-def route_length(route, stop_ids=()) -> int:
+def route_dv(plan, stop_ids=()) -> int:
+    """Total speed change (uly/yr): the fuel the mission burns."""
+    return sum(l[4] for l in route_legs(plan, stop_ids))
+
+
+def route_length(plan, stop_ids=()) -> int:
     """Distance flown in mly (for display)."""
     total, prev = 0, SOL
-    for _, _, p, _ in route_legs(route, stop_ids):
-        total += distance(prev, p)
-        prev = p
+    for sid, arrive, depart_at, _, _, _ in route_legs(plan, stop_ids):
+        total += distance(prev, pos(sid, arrive))
+        prev = depart_at
     return total
 
 
-def baseline_route(stars, stop_ids=()) -> list:
-    """Greedy route: always fly to the star you can reach soonest. The bar a miner's route is scored against."""
-    stop_set = set(stop_ids)
+def mass_ratio(dv) -> float:
+    """Rocket equation: launch mass / dry mass for a delta-v (display only)."""
+    return math.exp(dv / (C.EXHAUST_PCT_C * PCT))
+
+
+def _greedy(stars, stop_set, c):
     left = sorted(stars)
     here, t, u, route = SOL, LAUNCH_T, 0, []
     while left:
-        best = min(left, key=lambda s: (intercept(here, t, s, u, s in stop_set)[0], s))
+        best = min(left, key=lambda s: (intercept(here, t, s, u, c, s in stop_set)[0], s))
         left.remove(best)
-        t, here, u = intercept(here, t, best, u, best in stop_set)
+        t, here, u, _ = intercept(here, t, best, u, c, best in stop_set)
+        if best in stop_set:
+            t += SURVEY_T
+            here = pos(best, t)
         route.append(best)
     return route
+
+
+def baseline_route(stars, stop_ids=()) -> list:
+    """The bar a miner's plan is scored against: always fly to the star you can reach soonest,
+    at the fastest single cruise speed whose fuel fits the budget."""
+    stop_set = set(stop_ids)
+    for pct in range(MAX_PCT, 0, -1):
+        plan = [[s, pct] for s in _greedy(stars, stop_set, pct * PCT)]
+        if route_dv(plan, stop_ids) <= DV_BUDGET:
+            return plan
+    raise RuntimeError("no cruise speed fits the fuel budget")

@@ -96,51 +96,124 @@ def optimise(pts, seconds=2.0, sol=(0, 0, 0), seed=None):
 
 # ---- moving stars: exact mission-time scoring ---------------------------
 
-def probe_leg(d, u, stop, V, A):
-    """One leg of d micro-ly from speed u: (milli-years, end speed). Same maths as stars.leg."""
+def probe_leg(d, u, c, stop, A):
+    """One leg of d micro-ly from speed u cruising at c: (milli-years, end speed, delta-v). Same maths as stars.leg."""
     if not stop:
-        ramp = (V * V - u * u) // (2 * A)
+        if u <= c:
+            ramp = (c * c - u * u) // (2 * A)
+            if d >= ramp:
+                return (c - u) * 1000 // A + (d - ramp) * 1000 // c, c, c - u
+            w = math.isqrt(u * u + 2 * A * d)
+            return (w - u) * 1000 // A, w, w - u
+        ramp = (u * u - c * c) // (2 * A)
         if d >= ramp:
-            return (V - u) * 1000 // A + (d - ramp) * 1000 // V, V
-        w = math.isqrt(u * u + 2 * A * d)
-        return (w - u) * 1000 // A, w
+            return (u - c) * 1000 // A + (d - ramp) * 1000 // c, c, u - c
+        w = math.isqrt(u * u - 2 * A * d)
+        return (u - w) * 1000 // A, w, u - w
     brake = u * u // (2 * A)
     if brake >= d:
-        return u * 1000 // A + 2 * math.isqrt((brake - d) * 1_000_000 // A), 0
-    up, down = (V * V - u * u) // (2 * A), V * V // (2 * A)
+        e = brake - d
+        return u * 1000 // A + 2 * math.isqrt(e * 1_000_000 // A), 0, u + 2 * math.isqrt(A * e)
+    if u > c:
+        return (u - c) * 1000 // A + c * 1000 // A + (d - brake) * 1000 // c, 0, u
+    up, down = (c * c - u * u) // (2 * A), c * c // (2 * A)
     if up + down <= d:
-        return (V - u) * 1000 // A + V * 1000 // A + (d - up - down) * 1000 // V, 0
+        return (c - u) * 1000 // A + c * 1000 // A + (d - up - down) * 1000 // c, 0, 2 * c - u
     p = math.isqrt((2 * A * d + u * u) // 2)
-    return (p - u) * 1000 // A + p * 1000 // A, 0
+    return (p - u) * 1000 // A + p * 1000 // A, 0, 2 * p - u
 
 
-def mission_time(route_ids, work):
-    """Mission time (milli-years) for star ids, using the star data in a /mining/work reply.
-
-    Same integer maths as stars.route_time (acceleration, braking at survey stops,
-    moving stars), so it matches the node's score exactly.
-    """
+def plan_eval(plan, work):
+    """(mission time in milli-years, delta-v in micro-ly/yr) for a plan [[star id, cruise %c], ...],
+    using the star data in a /mining/work reply. Same integer maths as stars.route_time / route_dv,
+    so it matches the node's score exactly."""
     by_id = {s["id"]: s for s in work["stars"]}
-    V = work["probe_speed_mly_per_year"] * 1000
+    pct_speed = work["probe_speed_mly_per_year"] * 100        # 1% of c in micro-ly/yr
     A = work["probe_accel_mly_per_year2"] * 1000
     t0, iters = work["launch_t"], work["intercept_iterations"]
     stop_set = set(work.get("stops", ()))
+    survey = work.get("survey_years", 0) * 1000
 
     def pos(s, t):
         return (s["x"] + s["vx"] * t // 1_000_000, s["y"] + s["vy"] * t // 1_000_000,
                 s["z"] + s["vz"] * t // 1_000_000)
 
-    here, t, u = (0, 0, 0), t0, 0
-    for sid in route_ids:
-        s, stop = by_id[sid], sid in stop_set
-        arrive, speed = t, u
+    here, t, u, total_dv = (0, 0, 0), t0, 0, 0
+    for sid, pct in plan:
+        s, stop, c = by_id[sid], sid in stop_set, pct * pct_speed
+        arrive, speed, dv = t, u, 0
         for _ in range(iters):
             p = pos(s, arrive)
             d = math.isqrt(sum((p[k] - here[k]) ** 2 for k in range(3)) * 1_000_000)
-            dt, speed = probe_leg(d, u, stop, V, A)
+            dt, speed, dv = probe_leg(d, u, c, stop, A)
             arrive = t + dt
-        t, here, u = arrive, pos(s, arrive), speed
-    return t - t0
+        t = arrive + survey if stop else arrive
+        here, u, total_dv = pos(s, t), speed, total_dv + dv
+    return t - t0, total_dv
+
+
+def mission_time(plan, work):
+    """Mission time (milli-years) of a plan; see plan_eval."""
+    return plan_eval(plan, work)[0]
+
+
+def plan_cost(plan, work):
+    """Mission time, or infinity if the plan needs more fuel than the probe carries."""
+    t, dv = plan_eval(plan, work)
+    return t if dv <= work["dv_budget_pct_c"] * work["probe_speed_mly_per_year"] * 100 else float("inf")
+
+
+def tune_speeds(order, speeds, work, seconds):
+    """Hill-climb the per-leg cruise speeds (1-10 % of c) for a fixed star order, within the fuel budget.
+
+    Moves: change one leg's speed by +-1 or +-2, or shift one step of speed from one leg to another.
+    """
+    deadline = time.time() + seconds
+    speeds = list(speeds)
+    best = plan_cost([[s, v] for s, v in zip(order, speeds)], work)
+    n = len(order)
+    moves = [((i, d),) for i in range(n) for d in (1, -1, 2, -2)]
+    moves += [((i, 1), (j, -1)) for i in range(n) for j in range(n) if i != j]
+    improved = True
+    while improved and time.time() < deadline:
+        improved = False
+        for move in moves:
+            cand = list(speeds)
+            for i, d in move:
+                cand[i] += d
+            if any(v < 1 or v > 10 for v in cand):
+                continue
+            c = plan_cost([[s, v] for s, v in zip(order, cand)], work)
+            if c < best:
+                speeds, best, improved = cand, c, True
+            if time.time() > deadline:
+                break
+    return speeds, best
+
+
+def optimise_plan(order, work, seconds):
+    """Star order and per-leg speeds: start at the fastest uniform speed that fits the fuel,
+    then alternate speed tuning and order polishing (speeds stay with their leg position)."""
+    deadline = time.time() + seconds
+    speeds = None
+    for pct in range(10, 0, -1):
+        if plan_cost([[s, pct] for s in order], work) < float("inf"):
+            speeds = [pct] * len(order)
+            break
+    if speeds is None:
+        return [[s, 1] for s in order]
+    best = plan_cost([[s, v] for s, v in zip(order, speeds)], work)
+    while time.time() < deadline:
+        left = deadline - time.time()
+        speeds, _ = tune_speeds(order, speeds, work, left / 2)
+        sp = list(speeds)
+        order = polish(order, lambda o: plan_cost([[s, v] for s, v in zip(o, sp)], work),
+                       max(0.0, deadline - time.time()) / 2)
+        c = plan_cost([[s, v] for s, v in zip(order, speeds)], work)
+        if c >= best:
+            break
+        best = c
+    return [[s, v] for s, v in zip(order, speeds)]
 
 
 def polish(order, cost, seconds):

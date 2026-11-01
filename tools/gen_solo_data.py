@@ -103,6 +103,10 @@ object SoloData {{
     /** Probe acceleration (mly/yr²) and survey stops per block. */
     const val PROBE_ACCEL = {PC.PROBE_ACCEL_MLY_PER_YEAR2}L
     const val SURVEY_STOPS = {stars.SURVEY_STOPS}
+    /** Years spent at each survey stop; fuel budget and exhaust speed in % of light speed. */
+    const val SURVEY_YEARS = {PC.SURVEY_YEARS}L
+    const val DV_BUDGET_PCT_C = {PC.DV_BUDGET_PCT_C}L
+    const val EXHAUST_PCT_C = {PC.EXHAUST_PCT_C}L
     const val LAUNCH_T = {stars.LAUNCH_T}L
     const val INTERCEPT_ITERATIONS = {stars.INTERCEPT_ITERATIONS}
 

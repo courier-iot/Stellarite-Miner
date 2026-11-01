@@ -18,10 +18,16 @@ from crypto_utils import (address_from_pubkey, is_valid_address, new_private_key
                           public_key_hex, sign)
 
 
+
+def base_plan(prev_hash):
+    """The greedy baseline plan for a block (always valid)."""
+    return stars.baseline_route(stars.problem(prev_hash), stars.stops(prev_hash))
+
+
 def mine(template, route=None):
     """Mine a template; uses the greedy baseline route unless one is given."""
     template = dict(template)
-    template["route"] = route or stars.baseline_route(stars.problem(template["prev_hash"]))
+    template["route"] = route or base_plan(template["prev_hash"])
     sc = ch.route_score(template["prev_hash"], template["route"])
     prefix = ch.header_prefix(template)
     target = ch.effective_target(template["target"], sc["length"], sc["baseline"])
@@ -121,7 +127,7 @@ class ChainTests(unittest.TestCase):
         now = self.clock()
         t = self.bc.build_template(self.alice.addr, now=now)
         t["target"] = format(1, "064x")  # claim an impossible target
-        block = dict(t, nonce=0, route=stars.baseline_route(stars.problem(t["prev_hash"])))
+        block = dict(t, nonce=0, route=base_plan(t["prev_hash"]))
         block["hash"] = ch.block_hash(block)
         with self.assertRaises(ch.ValidationError):
             self.bc.add_block(block, now=now)
@@ -157,10 +163,25 @@ class ChainTests(unittest.TestCase):
         now = self.clock()
         t = self.bc.build_template(self.alice.addr, now=now)
         problem = stars.problem(t["prev_hash"])
-        for bad in (problem[:-1], problem[:-1] + problem[:1],
-                    problem[:-1] + [next(i for i in range(len(stars.CATALOG)) if i not in problem)]):
+        outsider = next(i for i in range(len(stars.CATALOG)) if i not in problem)
+        for bad in (problem[:-1], problem[:-1] + problem[:1], problem[:-1] + [outsider]):
             with self.assertRaises(ch.ValidationError):
+                ch.route_score(t["prev_hash"], [[s, 5] for s in bad])
+        for bad in (problem, [[s, 0] for s in problem], [[s, 11] for s in problem], [[s, True] for s in problem]):
+            with self.assertRaises(ch.ValidationError):            # plain ids, or speeds outside 1-10% of c
                 ch.route_score(t["prev_hash"], bad)
+
+    def test_fuel_budget(self):
+        t = self.bc.build_template(self.alice.addr, now=self.clock())
+        problem = stars.problem(t["prev_hash"])
+        with self.assertRaises(ch.ValidationError) as e:          # full speed everywhere needs ~0.9c of delta-v
+            ch.route_score(t["prev_hash"], [[s, 10] for s in problem])
+        self.assertIn("fuel", str(e.exception))
+        plan = base_plan(t["prev_hash"])
+        sc = ch.route_score(t["prev_hash"], plan)
+        self.assertLessEqual(sc["dv"], stars.DV_BUDGET)
+        faster = [[s, plan[0][1] + 1] for s, _ in plan]           # the baseline is the fastest uniform speed that fits
+        self.assertGreater(stars.route_dv(faster, stars.stops(t["prev_hash"])), stars.DV_BUDGET)
 
     def test_route_is_bound_into_the_hash(self):
         now = self.clock()
@@ -174,8 +195,9 @@ class ChainTests(unittest.TestCase):
         t = self.bc.build_template(self.alice.addr, now=self.clock())
         problem = stars.problem(t["prev_hash"])
         pts = [stars.pos(i) for i in problem]
-        best = [problem[i] for i in optimise(pts, seconds=0.5, seed=3)]
-        sc_base = ch.route_score(t["prev_hash"], stars.baseline_route(problem))
+        pct = base_plan(t["prev_hash"])[0][1]
+        best = [[problem[i], pct] for i in optimise(pts, seconds=0.5, seed=3)]
+        sc_base = ch.route_score(t["prev_hash"], base_plan(t["prev_hash"]))
         sc_best = ch.route_score(t["prev_hash"], best)
         self.assertLess(sc_best["length"], sc_base["length"])
         easy = ch.effective_target(t["target"], sc_best["length"], sc_best["baseline"])
@@ -225,32 +247,36 @@ class ChainTests(unittest.TestCase):
 
     def test_intercept_aims_where_the_star_will_be(self):
         sid = next(s["id"] for s in stars.CATALOG if s["name"] == "Kapteyn's Star")
-        t_arr, p, u = stars.intercept(stars.SOL, stars.LAUNCH_T, sid)
+        t_arr, p, u, dv = stars.intercept(stars.SOL, stars.LAUNCH_T, sid)
         self.assertEqual(p, stars.pos(sid, t_arr))
-        self.assertEqual(u, stars.V)                       # a long flyby leg ends at cruise speed
+        self.assertEqual((u, dv), (stars.V, stars.V))      # a long flyby leg ends at cruise speed
         d = stars.distance_uly(stars.SOL, p)               # 10 years to 0.1c over 0.5 ly, then cruise
         self.assertAlmostEqual(t_arr - stars.LAUNCH_T, 10_000 + (d - 500_000) * 1000 // stars.V, delta=2)
 
     def test_probe_kinematics(self):
         LY = 1_000_000                                     # micro-light-years per light-year
-        V = stars.V
-        self.assertEqual(stars.leg(10 * LY, 0, True), (110_000, 0))        # 10 up + 90 cruise + 10 down
-        self.assertEqual(stars.leg(10 * LY, V, False), (100_000, V))       # pure cruise at 0.1c
-        self.assertEqual(stars.leg(10 * LY, 0, False), (105_000, V))       # launch ramp costs 5 years
-        t, u = stars.leg(LY // 10, 0, True)                                # short hop: never reaches 0.1c
+        V, A = stars.V, stars.A
+        self.assertEqual(stars.leg(10 * LY, 0, V, True), (110_000, 0, 2 * V))     # 10 up + 90 cruise + 10 down
+        self.assertEqual(stars.leg(10 * LY, V, V, False), (100_000, V, 0))        # pure cruise: no fuel
+        self.assertEqual(stars.leg(10 * LY, 0, V, False), (105_000, V, V))        # launch ramp costs 5 years
+        self.assertEqual(stars.leg(10 * LY, V, V // 2, False)[1:], (V // 2, V // 2))   # slowing down burns fuel too
+        half = stars.leg(10 * LY, 0, V // 2, True)                               # at 5% of c: 5 up, 195 cruise, 5 down
+        self.assertEqual(half, (205_000, 0, V))
+        t, u, _ = stars.leg(LY // 10, 0, V, True)                                # short hop: never reaches 0.1c
         self.assertAlmostEqual(t, 2000 * math.sqrt(10), delta=2)
         self.assertEqual(u, 0)
-        t, _ = stars.leg(LY // 10, V, True)                                # too fast to stop: overshoot and return
+        t, _, _ = stars.leg(LY // 10, V, V, True)                                # too fast to stop: overshoot and return
         self.assertAlmostEqual(t, 10_000 + 2000 * math.sqrt(40), delta=2)
-        t, u = stars.leg(LY // 8, 0, False)                                # partial acceleration
-        self.assertEqual(u, math.isqrt(2 * stars.A * (LY // 8)))
-        self.assertEqual(t, u * 1000 // stars.A)
-        for d in range(0, 3 * LY, LY // 50):                               # longer legs never take less time...
+        t, u, dv = stars.leg(LY // 8, 0, V, False)                               # partial acceleration
+        self.assertEqual(u, math.isqrt(2 * A * (LY // 8)))
+        self.assertEqual((t, dv), (u * 1000 // A, u))
+        for d in range(0, 3 * LY, LY // 50):                                     # longer legs never take less time...
             for u0 in (0, V // 3, V):
-                for stop in (False, True):
-                    if stop and u0 * u0 // (2 * stars.A) >= d:             # ...unless too fast to stop (overshoot)
-                        continue
-                    self.assertLessEqual(stars.leg(d, u0, stop)[0], stars.leg(d + LY // 50, u0, stop)[0])
+                for c in (V // 10, V // 2, V):
+                    for stop in (False, True):
+                        if stop and u0 * u0 // (2 * A) >= d:                     # ...unless too fast to stop (overshoot)
+                            continue
+                        self.assertLessEqual(stars.leg(d, u0, c, stop)[0], stars.leg(d + LY // 50, u0, c, stop)[0])
 
     def test_survey_stops(self):
         h = "cd" * 32
@@ -258,22 +284,30 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(len(st), stars.SURVEY_STOPS)
         self.assertEqual(st, stars.stops(h))
         self.assertTrue(set(st) <= set(stars.problem(h)))
-        route = stars.baseline_route(stars.problem(h))
-        self.assertGreater(stars.route_time(route, st), stars.route_time(route))   # braking costs time
-        for sid, _, _, u in stars.route_legs(route, st):
+        plan = stars.baseline_route(stars.problem(h), st)
+        self.assertGreater(stars.route_time(plan, st), stars.route_time(plan))   # braking and surveying cost time
+        for sid, arrive, _, u, _, depart in stars.route_legs(plan, st):
             if sid in st:
                 self.assertEqual(u, 0)
+                self.assertEqual(depart - arrive, stars.SURVEY_T)                # 5 years at each stop
+            else:
+                self.assertEqual(depart, arrive)
 
     def test_miner_timing_matches_node(self):
-        from route_opt import mission_time
+        from route_opt import plan_eval, optimise_plan
         for h in ("ab" * 32, "12" * 32, "f0" * 32):
             prob, st = stars.problem(h), stars.stops(h)
             work = {"stars": [dict(stars.CATALOG[i]) for i in prob], "stops": st,
                     "probe_speed_mly_per_year": stars.SPEED,
                     "probe_accel_mly_per_year2": C.PROBE_ACCEL_MLY_PER_YEAR2,
+                    "survey_years": C.SURVEY_YEARS, "dv_budget_pct_c": C.DV_BUDGET_PCT_C,
                     "launch_t": stars.LAUNCH_T, "intercept_iterations": stars.INTERCEPT_ITERATIONS}
-            for route in (stars.baseline_route(prob, st), stars.baseline_route(prob, st)[::-1], prob):
-                self.assertEqual(mission_time(route, work), stars.route_time(route, st))
+            base = stars.baseline_route(prob, st)
+            tuned = optimise_plan([s for s, _ in base], work, 0.3)
+            for plan in (base, base[::-1], [[s, 1 + s % 10] for s in prob], tuned):
+                self.assertEqual(plan_eval(plan, work), (stars.route_time(plan, st), stars.route_dv(plan, st)))
+            self.assertLess(stars.route_time(tuned, st), stars.route_time(base, st))
+            self.assertLessEqual(stars.route_dv(tuned, st), stars.DV_BUDGET)
 
     def test_name_claim_without_coins(self):
         carol = Wallet()                          # no coins at all
@@ -334,9 +368,9 @@ class ApiTests(unittest.TestCase):
         q = f"&name={name}" if name else ""
         work = self.client.get(f"/mining/work?address={addr}{q}").get_json()
         pts = [(s["x"], s["y"], s["z"]) for s in work["stars"]]
-        route = [work["stars"][i]["id"] for i in optimise(pts, seconds=optimise_seconds, seed=1)]
-        from route_opt import mission_time, polish
-        route = polish(route, lambda r: mission_time(r, work), optimise_seconds)
+        order = [work["stars"][i]["id"] for i in optimise(pts, seconds=optimise_seconds, seed=1)]
+        from route_opt import optimise_plan
+        route = optimise_plan(order, work, optimise_seconds)
         scored = self.client.post("/mining/route", json={"job_id": work["job_id"], "route": route}).get_json()
         prefix, target = bytes.fromhex(scored["prefix"]), int(scored["target"], 16)
         nonce = 0
@@ -363,7 +397,7 @@ class ApiTests(unittest.TestCase):
     def test_stale_job_rejected(self):
         old = self.client.get(f"/mining/work?address={self.alice.addr}").get_json()
         self.mine_via_api(self.alice.addr)
-        route = stars.baseline_route([st["id"] for st in old["stars"]], old["stops"])
+        route = old["baseline_route"]
         r = self.client.post("/mining/submit", json={"job_id": old["job_id"], "route": route, "nonce": 0})
         self.assertIn(r.status_code, (409, 410))
 
@@ -376,7 +410,7 @@ class ApiTests(unittest.TestCase):
 
     def test_bad_route_refused(self):
         work = self.client.get(f"/mining/work?address={self.alice.addr}").get_json()
-        r = self.client.post("/mining/route", json={"job_id": work["job_id"], "route": [0, 1, 2]})
+        r = self.client.post("/mining/route", json={"job_id": work["job_id"], "route": [[0, 5], [1, 5], [2, 5]]})
         self.assertEqual(r.status_code, 400)
 
     def test_chain_import(self):

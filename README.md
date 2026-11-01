@@ -22,9 +22,9 @@ Pulsarite uses **proof of useful work**. Every block must carry a route that sta
  phone (Stellarite Miner)                    your computer (node.py)
  ────────────────────────                    ───────────────────────
  GET /mining/work?address=plsr…     ───►     picks this block's 24 stars
-                                    ◄───     { stars + positions, baseline }
- optimise a route through the stars
- POST /mining/route {route}         ───►     scores it: target × (baseline/length)^12
+                                    ◄───     { stars + positions, stops, fuel, baseline }
+ plan the stars' order + each leg's speed
+ POST /mining/route {route}         ───►     checks fuel, scores it: target × (baseline/time)^12
                                     ◄───     { header prefix, easier target }
  hash: sha256d(prefix + nonce) <= target ?
    (keep shortening the route every 10 s)
@@ -100,19 +100,23 @@ python wallet.py send plsr<recipient-address> 12.5
 python miner.py --address plsr…   # mine from the computer too
 ```
 
+Version history, with each feature marked major, medium or minor: [CHANGELOG.md](CHANGELOG.md).
+
 ## Useful work: star routes
 
-**The problem.** Each block's 24 stars are picked from the previous block's hash, so nobody can work on a block's route before that block exists. A probe launches from rest at the Sun in **2100** and must visit every star once. It accelerates to a cruise speed of **10% of light speed** (taking 10 years and half a light-year), and flies past most stars at whatever speed it has. Four of each block's stars are **survey stops**, also picked from the hash: the probe must brake to a halt at each one (another 10 years and half a light-year), then speed up again. If it's moving too fast to stop in time, it overshoots and comes back. So a good route doesn't just find short hops; it plans around the stops, for example grouping nearby stars after a stop while the probe is still slow.
+**The problem.** Each block's 24 stars are picked from the previous block's hash, so nobody can work on a block's route before that block exists. A probe launches from rest at the Sun in **2100** and must visit every star once. A route is a list of stars **and a cruise speed for each leg**, from 1% to 10% of light speed. The probe speeds up or slows down at a steady 0.03 g (0 to 10% of c takes 10 years and half a light-year), and flies past most stars at whatever speed it has. Four of each block's stars are **survey stops**, also picked from the hash: the probe must brake to a halt at each one, **survey it for 5 years** (riding along with the star as it moves), then speed up again. If it's moving too fast to stop in time, it overshoots and comes back.
+
+**Fuel.** Every change of speed burns fuel. The probe's total speed change over the mission (its delta-v) must fit a budget of **50% of light speed**; a route that needs more is invalid. Flying everything at top speed would need about 90%, so a good route decides where speed is worth the fuel: fast on long runs of flybys, slower on legs into and out of stops (each stop costs the speed you arrive with plus the speed you leave with). The node also reports the **mass ratio** this implies by the rocket equation (an advanced fusion drive with 10%-of-c exhaust): typically about 150 tonnes of launch mass per tonne of probe.
 
 **Stars move.** Every star has a space velocity (proper motion plus radial velocity). Over a mission lasting thousands of years they drift noticeably: Barnard's Star moves about half a light-year per thousand years. Each leg aims at where the star *will be* when the probe arrives, solved by iterating the intercept.
 
-**The score is mission time.** Every node computes a greedy route ("fly to whichever star you can reach soonest") as the baseline. A route 10% faster makes the hash target (1/0.9)¹² ≈ 3.5× easier. In testing, optimised routes were 7–23% faster than greedy, for missions of roughly 2,500–4,000 years. Everything (positions, velocities, speeds, times) is whole-number arithmetic, so every node and phone computes identical results; the app's timing matches the node's on 240 of 240 test routes and 3,000 of 3,000 individual legs.
+**The score is mission time.** Every node computes a greedy route ("fly to whichever star you can reach soonest") flown at the fastest single speed whose fuel fits (usually 5% of c) as the baseline. A route 10% faster makes the hash target (1/0.9)¹² ≈ 3.5× easier. In testing, optimised plans were 11–46% faster than greedy, for missions of roughly 2,500–5,500 years, and nearly always used the whole fuel budget. Everything (positions, velocities, speeds, fuel, times) is whole-number arithmetic, so every node and phone computes identical results; the app matches the node on 240 of 240 test plans (time, fuel, distance and baseline) and 5,000 of 5,000 individual legs.
 
 **Why keep hashing at all?** Route quality alone can't set a steady block time, and the best route for a block would quickly become a known answer. The hash keeps blocks unpredictable and lets difficulty adjust; the route bonus makes optimisation the thing that wins.
 
-**On the phone.** The rig plans each new block's route for about 2.5 seconds (a fast optimiser on mid-mission star positions, then an exact polish scored by true mission time), starts hashing, then keeps refining every 10 seconds. The RIG screen shows the live route, e.g. `ROUTE 24★ · 4 STOPS · 2,873 YR · 287 LY · 14.6% FASTER THAN GREEDY`. On the MAP tab, survey stops are marked ◆; tap a star to see when the probe gets there and how fast it's going.
+**On the phone.** The rig plans each new block's route for about 2.5 seconds (a fast optimiser on mid-mission star positions, then an exact polish scored by true mission time, taking turns with a speed tuner that moves fuel between legs), starts hashing, then keeps refining every 10 seconds. The RIG screen shows the live route, e.g. `ROUTE 24★ · 4 STOPS · 4,098 YR · 299 LY · FUEL 100% · 46.4% FASTER THAN GREEDY`. On the MAP tab, survey stops are marked ◆; tap a star to see when the probe gets there, the leg's cruise speed and the fuel it burned, and tap the probe to see how much of the tank is used.
 
-**The map.** `GET /routes` lists recent routes by star name with mission time, distance flown, survey stops, improvement and the miner's username. `GET /mining/work` includes the block's `stops`. `GET /stars` shows the catalog with velocities.
+**The map.** `GET /routes` lists recent routes by star name with mission time, distance flown, survey stops, improvement and the miner's username. `GET /mining/work` includes the block's `stops`, `survey_years` and `dv_budget_pct_c`; route rows include `speeds_pct_c`, `fuel_used_pct` and `mass_ratio`. `GET /stars` shows the catalog with velocities.
 
 **Using real star data.** The built-in catalog has ~50 well-known nearby systems with approximate positions and motions. For a serious network, build a catalog from the HYG database (positions and velocities from the Hipparcos and Gaia surveys):
 
@@ -122,7 +126,7 @@ python tools/build_catalog.py hygdata_v41.csv --max-ly 50 -o stars.json
 
 Every node must use the same catalog (`GET /info` shows a `catalog_id` to compare), and changing it starts a new chain. Afterwards, run `python tools/gen_solo_data.py` so the app's solo mode matches, then rebuild the app.
 
-**Limits.** Acceleration is constant (about 0.03 g) with no fuel limit, travel is in straight lines, and gravity and relativity are ignored (at 0.1c relativity changes times by only 0.5%). ROADMAP.md lists next steps.
+**Limits.** Acceleration is constant (about 0.03 g) and doesn't depend on how much fuel is left, the fuel budget is a delta-v total rather than propellant mass, travel is in straight lines, and gravity and relativity are ignored (at 0.1c relativity changes times by only 0.5%). ROADMAP.md lists next steps.
 
 ## Mining other coins (Bitcoin and friends)
 
@@ -202,7 +206,7 @@ Nodes forward new blocks and transactions to each other and re-sync every 30 sec
 | GET | `/balance/<address>` | balance and next nonce |
 | POST | `/tx` | submit a signed transaction, or a fee-free username claim (`"type": "name"`, with proof of work; `/info` gives `name_pow_bits`) |
 | GET | `/mining/work?address=…` | get a job: this block's stars, baseline route, base target |
-| POST | `/mining/route` | `{ "job_id", "route" }` → header prefix and the route's target |
+| POST | `/mining/route` | `{ "job_id", "route": [[star id, cruise % of c], …] }` → header prefix and the route's target |
 | POST | `/mining/submit` | `{ "job_id", "route", "nonce" }` |
 | GET | `/routes?limit=20` | the route map: recent blocks' routes, lengths, improvement |
 | GET | `/stars` | the star catalog in use |
@@ -271,8 +275,6 @@ A rotating 3D map of the useful work. Drag to rotate, pinch to zoom (star names 
 
 - **PLSR, star map:** every catalog star around the Sun with distance rings at 10, 20, 30 and 40 light-years. Recently mined routes are drawn in crimson, and the route your rig is optimising right now is drawn in amber, with its stars highlighted.
 - **NBLT, orbit map:** the planets' real orbits, with distances compressed so Mercury and Neptune both fit on screen. Recently mined missions are in crimson, and your rig's live mission plan is in amber, with each encounter labelled (e.g. `FLYBY JUPITER 2041`).
-
-Previews rendered from live node data: [star map](docs/map-preview-stars.png), [orbit map](docs/map-preview-orbits.png).
 
 The map loads from the selected coin's node (`/stars` + `/routes`, or `/planets` + `/missions`). Tap **[REFRESH]** after changing nodes. It isn't available for pool coins.
 

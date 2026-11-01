@@ -246,6 +246,8 @@ def mining_work():
         "stops": stop_ids,
         "baseline_route": baseline,
         "baseline_years": stars.route_time(baseline, stop_ids) / 1000,
+        "survey_years": C.SURVEY_YEARS,
+        "dv_budget_pct_c": C.DV_BUDGET_PCT_C,
         "probe_speed_mly_per_year": stars.SPEED,
         "probe_accel_mly_per_year2": C.PROBE_ACCEL_MLY_PER_YEAR2,
         "launch_t": stars.LAUNCH_T,
@@ -284,6 +286,7 @@ def mining_route():
         "years": score["length"] / 1000,
         "baseline_years": score["baseline"] / 1000,
         "length_ly": stars.route_length(body.get("route"), stop_ids) / 1000,
+        "fuel_used_pct": round(100 * score["dv"] / stars.DV_BUDGET, 1),
         "improvement_pct": round(100 * (1 - score["length"] / score["baseline"]), 2),
     })
 
@@ -328,7 +331,8 @@ def star_catalog():
                     "count": len(stars.CATALOG), "stars": stars.CATALOG,
                     "probe_speed_mly_per_year": stars.SPEED, "launch_t": stars.LAUNCH_T,
                     "probe_accel_mly_per_year2": C.PROBE_ACCEL_MLY_PER_YEAR2,
-                    "survey_stops": stars.SURVEY_STOPS,
+                    "survey_stops": stars.SURVEY_STOPS, "survey_years": C.SURVEY_YEARS,
+                    "dv_budget_pct_c": C.DV_BUDGET_PCT_C,
                     "intercept_iterations": stars.INTERCEPT_ITERATIONS})
 
 

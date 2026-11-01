@@ -192,7 +192,10 @@ class SoloChain(private val file: File, val rules: CoinRules, val useful: Useful
 class StarRouteRules : UsefulRules {
     override val field = "route"
     override val genesisValue: Any = JSONArray()
-    override fun headerText(value: Any) = (value as JSONArray).let { a -> (0 until a.length()).joinToString(",") { a.getInt(it).toString() } }
+    /** "id:speed,id:speed,..." as in chain.header_prefix. */
+    override fun headerText(value: Any) = (value as JSONArray).let { a ->
+        (0 until a.length()).joinToString(",") { a.getJSONArray(it).let { p -> "${p.getInt(0)}:${p.getInt(1)}" } }
+    }
 
     private val n get() = SoloData.STAR_NAMES.size
 
@@ -225,31 +228,54 @@ class StarRouteRules : UsefulRules {
         return chosen.sorted()
     }
 
-    /** Mission time (milli-years) of a route given as catalog star ids. */
-    fun time(route: List<Int>, stops: List<Int>): Long {
-        val f = StarField.fromCatalog(route, stops)
-        return f.time(IntArray(route.size) { it })
+    /** A route plan: catalog star ids and each leg's cruise speed (% of c). */
+    class Plan(val ids: List<Int>, val speeds: List<Int>) {
+        fun toJson() = JSONArray().also { a -> ids.indices.forEach { a.put(JSONArray().put(ids[it]).put(speeds[it])) } }
+        companion object {
+            fun fromJson(a: JSONArray): Plan {
+                val pairs = (0 until a.length()).map { a.getJSONArray(it) }
+                require(pairs.all { it.length() == 2 }) { "route must be [star id, cruise speed] pairs" }
+                return Plan(pairs.map { it.getInt(0) }, pairs.map { it.getInt(1) })
+            }
+        }
     }
 
-    /** Distance flown (mly) for a route given as catalog star ids. */
-    fun length(route: List<Int>, stops: List<Int>): Long {
-        val f = StarField.fromCatalog(route, stops)
-        return f.length(IntArray(route.size) { it })
-    }
+    private fun field(plan: Plan, stops: List<Int>) = StarField.fromCatalog(plan.ids, stops)
+    private fun local(plan: Plan) = IntArray(plan.ids.size) { it }
 
-    /** The greedy baseline route (catalog star ids) for a set of stars. */
-    fun baseline(stars: List<Int>, stops: List<Int>): List<Int> {
+    /** Mission time (milli-years) of a plan. */
+    fun time(plan: Plan, stops: List<Int>): Long = field(plan, stops).time(local(plan), plan.speeds.toIntArray())
+
+    /** Fuel used: total speed change in uly/yr. */
+    fun dv(plan: Plan, stops: List<Int>): Long = field(plan, stops).dv(local(plan), plan.speeds.toIntArray())
+
+    /** Distance flown (mly). */
+    fun length(plan: Plan, stops: List<Int>): Long = field(plan, stops).length(local(plan), plan.speeds.toIntArray())
+
+    /** The greedy baseline plan for a set of stars. */
+    fun baseline(stars: List<Int>, stops: List<Int>): Plan {
         val f = StarField.fromCatalog(stars.sorted(), stops)
-        return f.baseline().map { f.ids[it] }
+        val (order, speeds) = f.baseline()
+        return Plan(order.map { f.ids[it] }, speeds.toList())
+    }
+
+    private val baselineCache = object : LinkedHashMap<String, Long>(64, 0.75f, true) {
+        override fun removeEldestEntry(e: MutableMap.MutableEntry<String, Long>?) = size > 64
+    }
+
+    fun baselineTime(prevHash: String): Long = synchronized(baselineCache) {
+        baselineCache.getOrPut(prevHash) { val st = stops(prevHash); time(baseline(problem(prevHash), st), st) }
     }
 
     override fun score(prevHash: String, value: Any): Pair<Long, Long> {
-        val a = value as JSONArray
-        val route = List(a.length()) { a.getInt(it) }
+        val plan = Plan.fromJson(value as JSONArray)
         val prob = problem(prevHash)
-        require(route.sorted() == prob) { "route must visit each of the block's stars exactly once" }
+        require(plan.ids.sorted() == prob && plan.speeds.all { it in 1..StarField.MAX_PCT }) {
+            "route must visit each of the block's stars exactly once, as [star id, cruise speed 1-10] pairs"
+        }
         val st = stops(prevHash)
-        return time(route, st) to time(baseline(prob, st), st)
+        require(dv(plan, st) <= SoloData.DV_BUDGET_PCT_C * SoloData.PROBE_SPEED * 100) { "route needs more fuel than the probe carries" }
+        return time(plan, st) to baselineTime(prevHash)
     }
 }
 

@@ -37,16 +37,21 @@ GENESIS_TARGET = MAX_TARGET >> GENESIS_DIFFICULTY_BITS
 # better routes win blocks. See stars.py and README "Useful work".
 ROUTE_BONUS_EXPONENT = 12
 
-# The probe: launched from rest at the Sun in LAUNCH_YEAR, it accelerates to a
-# cruise speed of 10% of light speed (100 milli-light-years per year), flies past
-# most stars at whatever speed it has, and brakes to a full stop at each block's
-# survey stars. Speeding up from rest (or braking to rest) takes 10 years and
-# about half a light-year. Stars move while it travels, so routes are scored by
-# mission time.
-PROBE_SPEED_MLY_PER_YEAR = 100
-PROBE_ACCEL_MLY_PER_YEAR2 = 10      # 0 to 0.1c in 10 years (about 0.03 g)
+# The probe: launched from rest at the Sun in LAUNCH_YEAR. Each leg of a route
+# names a cruise speed, 1-10% of light speed (10% = 100 milli-light-years per
+# year). The probe speeds up or slows down at a steady 0.03 g (10 years from 0
+# to 10%), flies past most stars at whatever speed it has, and at each block's
+# survey stars brakes to a halt and stays SURVEY_YEARS before leaving.
+# Every change of speed burns fuel: the probe's total speed change (delta-v) over
+# the whole mission must fit within DV_BUDGET_PCT_C, so going fast everywhere is
+# impossible and a good route spends its fuel where it saves the most time.
+PROBE_SPEED_MLY_PER_YEAR = 100      # top cruise speed (10% of light speed)
+PROBE_ACCEL_MLY_PER_YEAR2 = 10      # 0 to 10% of c in 10 years (about 0.03 g)
 SURVEY_STOPS = 4                    # stars per block where the probe must stop
+SURVEY_YEARS = 5                    # time spent surveying each stop
+DV_BUDGET_PCT_C = 50                # fuel: total delta-v of 50% of light speed
+EXHAUST_PCT_C = 10                  # exhaust speed (advanced fusion), for the mass-ratio display
 LAUNCH_YEAR = 2100
 
 GENESIS_TIMESTAMP = 1_790_812_800  # 2026-10-01 00:00 UTC
-GENESIS_MESSAGE = "Pulsarite genesis v3 - acceleration, braking and survey stops"
+GENESIS_MESSAGE = "Pulsarite genesis v4 - fuel budgets, cruise speeds and survey time"

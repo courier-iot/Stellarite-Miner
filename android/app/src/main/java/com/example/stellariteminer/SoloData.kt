@@ -16,7 +16,7 @@ object SoloData {
         maxRetargetFactor = 4,
         genesisDifficultyBits = 20,
         genesisTimestamp = 1790812800L,
-        genesisMessage = "Pulsarite genesis v3 - acceleration, braking and survey stops",
+        genesisMessage = "Pulsarite genesis v4 - fuel budgets, cruise speeds and survey time",
         bonusExponent = 12,
     )
 
@@ -104,6 +104,10 @@ object SoloData {
     /** Probe acceleration (mly/yr²) and survey stops per block. */
     const val PROBE_ACCEL = 10L
     const val SURVEY_STOPS = 4
+    /** Years spent at each survey stop; fuel budget and exhaust speed in % of light speed. */
+    const val SURVEY_YEARS = 5L
+    const val DV_BUDGET_PCT_C = 50L
+    const val EXHAUST_PCT_C = 10L
     const val LAUNCH_T = 100000L
     const val INTERCEPT_ITERATIONS = 3
 

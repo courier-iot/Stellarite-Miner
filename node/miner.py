@@ -13,7 +13,7 @@ import time
 import urllib.error
 import urllib.request
 
-from route_opt import mission_time, optimise, polish
+from route_opt import optimise, optimise_plan, plan_cost, polish
 
 REFRESH_SECONDS = 10   # fetch fresh work this often so we notice new blocks
 ROUTE_SECONDS = 2      # time spent optimising each block's route
@@ -62,7 +62,11 @@ def main():
                 s["z"] + s["vz"] * t_mid // 1_000_000) for s in work["stars"]]
         order = optimise(pts, seconds=args.route_seconds * 0.6)
         route = [work["stars"][i]["id"] for i in order]
-        route = polish(route, lambda r: mission_time(r, work), args.route_seconds * 0.4)
+        # Exact polish of the order at the baseline's cruise speed, then tune speeds leg by leg
+        # (spending the fuel budget where it saves the most time) and keep alternating.
+        base_pct = work["baseline_route"][0][1]
+        route = polish(route, lambda r: plan_cost([[s, base_pct] for s in r], work), args.route_seconds * 0.15)
+        route = optimise_plan(route, work, args.route_seconds * 0.25)
         scored = call(f"{node}/mining/route", {"job_id": work["job_id"], "route": route})
         if "prefix" not in scored:
             print("Route refused:", scored.get("error"))
@@ -73,7 +77,8 @@ def main():
                               t0 + REFRESH_SECONDS)
         rate = tried / max(time.time() - t0, 1e-6)
         route_txt = (f"mission {scored['years']:,.0f} yr vs greedy {scored['baseline_years']:,.0f} yr "
-                     f"({scored['improvement_pct']:+.1f}% faster, {scored['length_ly']:.0f} ly flown)")
+                     f"({scored['improvement_pct']:+.1f}% faster, {scored['length_ly']:.0f} ly flown, "
+                     f"{scored['fuel_used_pct']:.0f}% of fuel)")
         if nonce is None:
             print(f"height {work['height']}: {route_txt}, {rate/1000:.0f} kH/s, refreshing")
             continue

@@ -4,8 +4,9 @@ Model
 -----
 * Account-based ledger (balances + per-address nonce), simpler than UTXOs.
 * Proof of useful work: every block carries a route through 24 stars picked
-  from the previous block's hash (see stars.py). A probe flies the route at 10%
-  of light speed while the stars move. A block is valid when
+  from the previous block's hash (see stars.py), with a cruise speed for each
+  leg. A probe flies it while the stars move, braking and surveying at 4 stops,
+  within a fixed fuel budget. A block is valid when
       sha256d(header_prefix + nonce as 8 bytes big-endian) <= effective target
   where effective target = base target * (baseline time / route time)^12.
   Faster routes make the hash target exponentially easier, so miners spend
@@ -14,6 +15,7 @@ Model
   needs the prefix bytes and the effective target to search for nonces.
 * Fork choice: the valid chain with the most cumulative work wins.
 """
+import functools
 import json
 import os
 import re
@@ -102,7 +104,7 @@ def tx_root(txs) -> str:
 
 
 def header_prefix(block: dict) -> bytes:
-    route = ",".join(str(s) for s in block["route"])
+    route = ",".join(f"{s}:{v}" for s, v in block["route"])
     return (
         f"{C.COIN_NAME}|{block['height']}|{block['prev_hash']}|{block['timestamp']}|"
         f"{block['target']}|{block['tx_root']}|{route}|"
@@ -110,20 +112,31 @@ def header_prefix(block: dict) -> bytes:
 
 
 def route_score(prev_hash: str, route) -> dict:
-    """Check a route against the block's star problem and score it.
+    """Check a route plan against the block's star problem and fuel budget, and score it.
 
-    Raises ValidationError if the route doesn't visit exactly the problem's stars.
+    A plan is [[star id, cruise speed in % of c], ...]. Raises ValidationError if it
+    doesn't visit exactly the problem's stars, or needs more fuel than the probe carries.
     """
     problem = stars.problem(prev_hash)
-    if (not isinstance(route, list) or len(route) != len(problem)
-            or any(not isinstance(s, int) or isinstance(s, bool) for s in route)
-            or sorted(route) != problem):
-        raise ValidationError("route must visit each of the block's stars exactly once")
-    # "length" and "baseline" are mission times in milli-years (lower is better)
+    if (not stars.check_plan(route) or len(route) != len(problem)
+            or sorted(s for s, _ in route) != problem):
+        raise ValidationError("route must visit each of the block's stars exactly once, "
+                              "as [star id, cruise speed 1-10] pairs")
     stop_ids = stars.stops(prev_hash)
+    dv = stars.route_dv(route, stop_ids)
+    if dv > stars.DV_BUDGET:
+        raise ValidationError(f"route needs {dv / stars.PCT:.1f}% of c of speed change; "
+                              f"the probe's fuel allows {C.DV_BUDGET_PCT_C}%")
+    # "length" and "baseline" are mission times in milli-years (lower is better)
     length = stars.route_time(route, stop_ids)
-    baseline = stars.route_time(stars.baseline_route(problem, stop_ids), stop_ids)
-    return {"length": length, "baseline": baseline}
+    baseline = _baseline_time(prev_hash)
+    return {"length": length, "baseline": baseline, "dv": dv}
+
+
+@functools.lru_cache(maxsize=256)
+def _baseline_time(prev_hash):
+    stop_ids = stars.stops(prev_hash)
+    return stars.route_time(stars.baseline_route(stars.problem(prev_hash), stop_ids), stop_ids)
 
 
 def effective_target(base_target_hex: str, length: int, baseline: int) -> int:
@@ -453,7 +466,10 @@ class Blockchain:
             out.append({
                 "height": b["height"], "miner": b["txs"][0]["to"], "timestamp": b["timestamp"],
                 "miner_name": self.state.name_of.get(b["txs"][0]["to"]),
-                "route": [stars.CATALOG[s]["name"] for s in b["route"]], "route_ids": b["route"],
+                "route": [stars.CATALOG[s]["name"] for s, _ in b["route"]],
+                "route_ids": [s for s, _ in b["route"]], "speeds_pct_c": [v for _, v in b["route"]],
+                "fuel_used_pct": round(100 * sc["dv"] / stars.DV_BUDGET, 1),
+                "mass_ratio": round(stars.mass_ratio(sc["dv"]), 1),
                 "years": sc["length"] / 1000, "baseline_years": sc["baseline"] / 1000,
                 "length_ly": stars.route_length(b["route"], stars.stops(b["prev_hash"])) / 1000,
                 "stops": [stars.CATALOG[s]["name"] for s in stars.stops(b["prev_hash"])],

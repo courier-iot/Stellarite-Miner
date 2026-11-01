@@ -6,7 +6,7 @@ Every change to how blocks are scored is a consensus change: all nodes must upgr
 
 ## Pulsarite: star routes
 
-Today: routes from the Sun through 24 moving stars, flown by a probe that accelerates to 0.1c and brakes to a stop at 4 survey stars per block, scored by mission time.
+Today: routes from the Sun through 24 moving stars, flown by a probe that picks a cruise speed (1–10% of c) for each leg, brakes and surveys for 5 years at 4 stars per block, and must fit a fuel budget (50% of c of total delta-v), scored by mission time.
 
 - [x] **Star movement.** Stars drift across the sky (proper motion) and toward or away from us (radial velocity); over a century-long trip Barnard's Star moves about 0.05 light-years. Add `pmra`, `pmdec` and `rv` to each catalog star and compute positions at the moment the probe arrives, not today.
   - [x] `tools/build_catalog.py` reads HYG's space velocities; the built-in catalog has approximate motions.
@@ -20,7 +20,9 @@ Today: routes from the Sun through 24 moving stars, flown by a probe that accele
 - [ ] **Real star catalog by default.** Ship a Gaia/HYG-derived catalog of every star within 50 ly (about 1,500 stars, many of them faint red dwarfs) and record its fingerprint in the genesis block, so nodes can't disagree about it.
 - [ ] **Scale problems with the catalog.** Raise `STARS_PER_PROBLEM` from 24 to 40–60 so optimisation stays hard as phones get better at it.
 - [ ] **Science-weighted targets.** Favour stars with known exoplanets or habitable-zone planets (from the NASA Exoplanet Archive), so routes prioritise worthwhile destinations. Score science value per year of travel.
-- [ ] **Fuel and dwell time.** Survey stops exist; next, give each stop a survey duration and model propellant (rocket equation), so the trade-off between speed and fuel becomes part of the score.
+- [x] **Fuel and survey time.** 5 years at each survey stop; a per-leg cruise speed; a delta-v budget every route must fit, with the rocket-equation mass ratio reported.
+  - [ ] Propellant mass instead of a delta-v total: acceleration rises as the probe gets lighter.
+  - [ ] Science value per stop (exoplanets, habitable zones) and survey time that depends on the target.
 - [ ] **Best-known route archive.** Keep the best route ever found for each star set, so the map improves over time instead of only growing.
 - [x] **3D route map in the app** (MAP tab).
 - [ ] **3D route map on the web.** A page served by the node that draws recent routes among the stars.
@@ -76,3 +78,4 @@ Today: planets on circular, flat orbits; Lambert transfers between planets; patc
 - [x] First-run setup (username, wallet with backup check, where to mine); on-chain usernames; sending coins (RFC 6979 signatures)
 - [x] Pulsarite: moving stars and probe travel time, scored by mission time
 - [x] Pulsarite: acceleration, braking and survey stops; usernames claimable without mining
+- [x] Pulsarite: per-leg cruise speeds, fuel budget and survey time

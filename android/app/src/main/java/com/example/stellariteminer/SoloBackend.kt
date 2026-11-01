@@ -49,12 +49,13 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
         val f = routeField!!
         val opt = routePlanner!!
         opt.improve(ms)
-        val route = opt.best.map { f.ids[it] }
+        val plan = StarRouteRules.Plan(opt.best.map { f.ids[it] }, opt.bestSpeeds.toList())
         val time = opt.bestTime
-        val base = f.time(f.baseline())
-        return JSONArray(route) to RouteInfo(route, time / 1000.0, base / 1000.0,
-            Math.round(10000.0 * (1 - time.toDouble() / base)) / 100.0, f.length(opt.best) / 1000.0,
-            u.stops(t.prev))
+        val base = opt.baselineTime
+        val dv = f.dv(opt.best, opt.bestSpeeds)
+        return plan.toJson() to RouteInfo(plan.ids, time / 1000.0, base / 1000.0,
+            Math.round(10000.0 * (1 - time.toDouble() / base)) / 100.0, f.length(opt.best, opt.bestSpeeds) / 1000.0,
+            u.stops(t.prev), plan.speeds, Math.round(1000.0 * dv / f.dvBudget) / 10.0)
     }
 
     private fun trajectoryWork(u: TrajectoryRules, t: SoloChain.Template, fresh: Boolean, ms: Long): Pair<Any, UsefulWork> {
@@ -116,14 +117,15 @@ class SoloBackend(private val chain: SoloChain, private val address: String, pri
             val u = chain.useful as StarRouteRules
             val out = JSONArray()
             for (b in chain.blocks.drop(1).takeLast(limit).reversed()) {
-                val r = b.getJSONArray("route")
-                val ids = List(r.length()) { r.getInt(it) }
+                val plan = StarRouteRules.Plan.fromJson(b.getJSONArray("route"))
                 val st = u.stops(b.getString("prev_hash"))
-                val t = u.time(ids, st); val base = u.time(u.baseline(ids, st), st)
-                out.put(JSONObject().put("height", b.getLong("height")).put("route_ids", JSONArray(ids))
-                    .put("stop_ids", JSONArray(st))
+                val t = u.time(plan, st); val base = u.baselineTime(b.getString("prev_hash"))
+                val budget = SoloData.DV_BUDGET_PCT_C * SoloData.PROBE_SPEED * 100
+                out.put(JSONObject().put("height", b.getLong("height")).put("route_ids", JSONArray(plan.ids))
+                    .put("speeds_pct_c", JSONArray(plan.speeds)).put("stop_ids", JSONArray(st))
+                    .put("fuel_used_pct", Math.round(1000.0 * u.dv(plan, st) / budget) / 10.0)
                     .put("years", t / 1000.0).put("baseline_years", base / 1000.0)
-                    .put("length_ly", u.length(ids, st) / 1000.0)
+                    .put("length_ly", u.length(plan, st) / 1000.0)
                     .put("miner_name", b.getJSONArray("txs").getJSONObject(0).optString("name", ""))
                     .put("improvement_pct", Math.round(10000.0 * (1 - t.toDouble() / base)) / 100.0))
             }
